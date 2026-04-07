@@ -2,7 +2,25 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { dispatchLocalAiMethod } from '../../lib/ai/localCoreAiMemory';
 import type { AccessibilityStatus, CommandResponse } from '../../utils/tauriCommands';
-import { callCoreRpc } from '../coreRpcClient';
+import { callCoreRpc, getCoreHttpBaseUrl, getCoreRpcUrl } from '../coreRpcClient';
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => false) }));
+
+vi.mock('../../lib/ai/localCoreAiMemory', () => ({
+  dispatchLocalAiMethod: vi.fn(async (_method: string) => ({ source: 'local-ai' })),
+}));
+
+vi.mock('../../utils/config', () => ({
+  CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
+  IS_DEV: true,
+  DEV_FORCE_ONBOARDING: false,
+  SKILLS_GITHUB_REPO: 'test/skills',
+  SENTRY_DSN: undefined,
+  BACKEND_URL: 'http://localhost:5005',
+  TELEGRAM_BOT_USERNAME: 'openhuman_bot',
+  DEV_JWT_TOKEN: undefined,
+  TOOL_TIMEOUT_SECS: 120,
+}));
 
 function sampleAccessibilityStatus(
   overrides: Partial<AccessibilityStatus> = {}
@@ -52,15 +70,13 @@ function sampleAccessibilityStatus(
   };
 }
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => false) }));
-vi.mock('../../lib/ai/localCoreAiMemory', () => ({
-  dispatchLocalAiMethod: vi.fn(async (_method: string) => ({ source: 'local-ai' })),
-}));
-
 describe('coreRpcClient', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', vi.fn());
+    // Reset private variables in coreRpcClient by reloading?
+    // Since it's a module, it might keep state.
+    // We can't easily reset resolvedCoreRpcUrl without more work.
   });
 
   test('normalizes legacy auth methods from dotted to underscored', async () => {
@@ -76,6 +92,20 @@ describe('coreRpcClient', () => {
     const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(String(requestInit.body));
     expect(body.method).toBe('openhuman.auth_get_state');
+  });
+
+  test('normalizes legacy method aliases', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 1, result: { ok: true } }),
+    } as Response);
+
+    await callCoreRpc({ method: 'openhuman.get_config' });
+
+    const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.method).toBe('openhuman.config_get');
   });
 
   test('maps accessibility prefix to screen intelligence prefix', async () => {
@@ -135,6 +165,18 @@ describe('coreRpcClient', () => {
     await expect(callCoreRpc({ method: 'openhuman.config_get' })).rejects.toThrow('boom from core');
   });
 
+  test('throws on missing result in response', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 4 }),
+    } as Response);
+
+    await expect(callCoreRpc({ method: 'openhuman.config_get' })).rejects.toThrow(
+      'Core RPC response missing result'
+    );
+  });
+
   test('throws on non-ok HTTP response', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce({
@@ -158,5 +200,34 @@ describe('coreRpcClient', () => {
     expect(localDispatchMock).toHaveBeenCalledWith('ai.get_config', {});
     expect(fetch).not.toHaveBeenCalled();
     expect(result).toEqual({ state: 'ready' });
+  });
+
+  test('getCoreRpcUrl returns default when not in Tauri', async () => {
+    const { isTauri } = await import('@tauri-apps/api/core');
+    vi.mocked(isTauri).mockReturnValue(false);
+
+    const url = await getCoreRpcUrl();
+    expect(url).toBe('http://127.0.0.1:7788/rpc');
+  });
+
+  test('getCoreHttpBaseUrl strips path and trailing slash', async () => {
+    const baseUrl = await getCoreHttpBaseUrl();
+    expect(baseUrl).toBe('http://127.0.0.1:7788');
+  });
+
+  test('handles various error types in coreRpcErrorMessage', async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    // Test string error
+    fetchMock.mockRejectedValueOnce('Literal error string');
+    await expect(callCoreRpc({ method: 'test' })).rejects.toThrow('Literal error string');
+
+    // Test object with error field
+    fetchMock.mockRejectedValueOnce({ error: 'Object error field' });
+    await expect(callCoreRpc({ method: 'test' })).rejects.toThrow('Object error field');
+
+    // Test unknown error
+    fetchMock.mockRejectedValueOnce(null);
+    await expect(callCoreRpc({ method: 'test' })).rejects.toThrow('Unknown core RPC error');
   });
 });
