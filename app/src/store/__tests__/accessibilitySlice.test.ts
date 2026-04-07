@@ -3,10 +3,17 @@ import { describe, expect, it } from 'vitest';
 import type { AccessibilityStatus, CaptureTestResult } from '../../utils/tauriCommands';
 import reducer, {
   clearAccessibilityError,
+  executeAccessibilityInputAction,
   fetchAccessibilityStatus,
+  fetchAccessibilityVisionRecent,
+  flushAccessibilityVision,
   refreshPermissionsWithRestart,
+  requestAccessibilityPermission,
+  requestAccessibilityPermissions,
   runCaptureTest,
+  setAccessibilitySessionFeatures,
   setAccessibilityStatus,
+  setAccessibilityVisionSummaries,
   startAccessibilitySession,
   stopAccessibilitySession,
 } from '../accessibilitySlice';
@@ -161,5 +168,140 @@ describe('accessibilitySlice', () => {
     });
     expect(rejected.isCaptureTestRunning).toBe(false);
     expect(rejected.lastError).toBe('capture failed');
+  });
+
+  it('tracks requestAccessibilityPermissions lifecycle', () => {
+    const pending = reducer(undefined, { type: requestAccessibilityPermissions.pending.type });
+    expect(pending.isRequestingPermissions).toBe(true);
+    expect(pending.lastError).toBeNull();
+
+    const fulfilled = reducer(
+      pending,
+      requestAccessibilityPermissions.fulfilled(sampleStatus, 'req', undefined)
+    );
+    expect(fulfilled.isRequestingPermissions).toBe(false);
+    expect(fulfilled.status).toEqual(sampleStatus);
+
+    const rejected = reducer(undefined, {
+      type: requestAccessibilityPermissions.rejected.type,
+      payload: 'perm failed',
+    });
+    expect(rejected.isRequestingPermissions).toBe(false);
+    expect(rejected.lastError).toBe('perm failed');
+  });
+
+  it('tracks requestAccessibilityPermission (single) lifecycle', () => {
+    const pending = reducer(undefined, { type: requestAccessibilityPermission.pending.type });
+    expect(pending.isRequestingPermissions).toBe(true);
+
+    const fulfilled = reducer(
+      pending,
+      requestAccessibilityPermission.fulfilled(sampleStatus, 'req', 'accessibility')
+    );
+    expect(fulfilled.isRequestingPermissions).toBe(false);
+    expect(fulfilled.status).toEqual(sampleStatus);
+
+    const rejected = reducer(undefined, {
+      type: requestAccessibilityPermission.rejected.type,
+      payload: 'single perm failed',
+    });
+    expect(rejected.lastError).toBe('single perm failed');
+  });
+
+  it('tracks stopAccessibilitySession fulfilled and rejected', () => {
+    const fulfilled = reducer(
+      undefined,
+      stopAccessibilitySession.fulfilled(sampleStatus, 'req', undefined)
+    );
+    expect(fulfilled.isStoppingSession).toBe(false);
+    expect(fulfilled.status).toEqual(sampleStatus);
+
+    const rejected = reducer(undefined, {
+      type: stopAccessibilitySession.rejected.type,
+      payload: 'stop failed',
+    });
+    expect(rejected.isStoppingSession).toBe(false);
+    expect(rejected.lastError).toBe('stop failed');
+  });
+
+  it('tracks executeAccessibilityInputAction rejected', () => {
+    const rejected = reducer(undefined, {
+      type: executeAccessibilityInputAction.rejected.type,
+      payload: 'input failed',
+    });
+    expect(rejected.lastError).toBe('input failed');
+  });
+
+  it('tracks fetchAccessibilityVisionRecent lifecycle', () => {
+    const pending = reducer(undefined, { type: fetchAccessibilityVisionRecent.pending.type });
+    expect(pending.isLoadingVision).toBe(true);
+
+    const summaries = [{ id: 's1' }] as any[];
+    const fulfilled = reducer(
+      pending,
+      fetchAccessibilityVisionRecent.fulfilled(summaries, 'req', undefined)
+    );
+    expect(fulfilled.isLoadingVision).toBe(false);
+    expect(fulfilled.recentVisionSummaries).toEqual(summaries);
+
+    const rejected = reducer(undefined, {
+      type: fetchAccessibilityVisionRecent.rejected.type,
+      payload: 'vision failed',
+    });
+    expect(rejected.isLoadingVision).toBe(false);
+    expect(rejected.lastError).toBe('vision failed');
+  });
+
+  it('tracks flushAccessibilityVision lifecycle', () => {
+    const pending = reducer(undefined, { type: flushAccessibilityVision.pending.type });
+    expect(pending.isFlushingVision).toBe(true);
+
+    const summary = { id: 'v1', text: 'screen shot' } as any;
+    const fulfilled = reducer(
+      pending,
+      flushAccessibilityVision.fulfilled(summary, 'req', undefined)
+    );
+    expect(fulfilled.isFlushingVision).toBe(false);
+    expect(fulfilled.recentVisionSummaries[0]).toEqual(summary);
+
+    // null summary is a no-op
+    const fulfilledNull = reducer(
+      pending,
+      flushAccessibilityVision.fulfilled(null as any, 'req', undefined)
+    );
+    expect(fulfilledNull.recentVisionSummaries).toEqual([]);
+
+    const rejected = reducer(undefined, {
+      type: flushAccessibilityVision.rejected.type,
+      payload: 'flush failed',
+    });
+    expect(rejected.isFlushingVision).toBe(false);
+    expect(rejected.lastError).toBe('flush failed');
+  });
+
+  it('setAccessibilitySessionFeatures updates session when status exists', () => {
+    const withStatus = reducer(undefined, setAccessibilityStatus(sampleStatus));
+    const newSession = { ...sampleStatus.session, active: true };
+    const updated = reducer(withStatus, setAccessibilitySessionFeatures(newSession));
+    expect(updated.status?.session?.active).toBe(true);
+  });
+
+  it('setAccessibilitySessionFeatures is no-op when status is null', () => {
+    const state = reducer(undefined, setAccessibilitySessionFeatures({} as any));
+    expect(state.status).toBeNull();
+  });
+
+  it('setAccessibilityVisionSummaries sets summaries', () => {
+    const summaries = [{ id: 's1' }] as any[];
+    const state = reducer(undefined, setAccessibilityVisionSummaries(summaries));
+    expect(state.recentVisionSummaries).toEqual(summaries);
+  });
+
+  it('fetchAccessibilityStatus sets lastError to default when payload undefined', () => {
+    const rejected = reducer(undefined, {
+      type: fetchAccessibilityStatus.rejected.type,
+      payload: undefined,
+    });
+    expect(rejected.lastError).toBe('Failed to fetch accessibility status');
   });
 });

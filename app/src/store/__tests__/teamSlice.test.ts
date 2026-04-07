@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { configureStore } from '@reduxjs/toolkit';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { teamApi } from '../../services/api/teamApi';
 import type { TeamInvite, TeamMember, TeamWithRole } from '../../types/team';
 import reducer, { clearTeamState, fetchInvites, fetchMembers, fetchTeams } from '../teamSlice';
 
@@ -41,7 +43,13 @@ const mockInvite: TeamInvite = {
   usageHistory: [],
 };
 
+function createStore() {
+  return configureStore({ reducer: { team: reducer } });
+}
+
 describe('teamSlice', () => {
+  beforeEach(() => vi.clearAllMocks());
+
   const initialState = reducer(undefined, { type: '@@INIT' });
 
   describe('initial state', () => {
@@ -146,6 +154,60 @@ describe('teamSlice', () => {
       const withError = { ...initialState, error: 'old' };
       const state = reducer(withError, fetchInvites.pending('', 'team-1'));
       expect(state.error).toBeNull();
+    });
+  });
+
+  describe('thunk bodies (async dispatch)', () => {
+    it('fetchTeams dispatches fulfilled with API result', async () => {
+      vi.mocked(teamApi.getTeams).mockResolvedValue([mockTeam]);
+      const store = createStore();
+      await store.dispatch(fetchTeams());
+      expect(store.getState().team.teams).toEqual([mockTeam]);
+      expect(store.getState().team.isLoading).toBe(false);
+    });
+
+    it('fetchTeams dispatches rejected on error', async () => {
+      vi.mocked(teamApi.getTeams).mockRejectedValue({ error: 'Server down' });
+      const store = createStore();
+      await store.dispatch(fetchTeams());
+      expect(store.getState().team.error).toBe('Server down');
+    });
+
+    it('fetchTeams rejected with generic message for non-object error', async () => {
+      vi.mocked(teamApi.getTeams).mockRejectedValue(new Error('Network'));
+      const store = createStore();
+      await store.dispatch(fetchTeams());
+      expect(store.getState().team.error).toBe('Failed to fetch teams');
+    });
+
+    it('fetchMembers dispatches fulfilled with API result', async () => {
+      vi.mocked(teamApi.getMembers).mockResolvedValue([mockMember]);
+      const store = createStore();
+      await store.dispatch(fetchMembers('team-1'));
+      expect(store.getState().team.members).toEqual([mockMember]);
+      expect(store.getState().team.isLoadingMembers).toBe(false);
+    });
+
+    it('fetchMembers dispatches rejected on error', async () => {
+      vi.mocked(teamApi.getMembers).mockRejectedValue({ error: 'Forbidden' });
+      const store = createStore();
+      await store.dispatch(fetchMembers('team-1'));
+      expect(store.getState().team.error).toBe('Forbidden');
+    });
+
+    it('fetchInvites dispatches fulfilled with API result', async () => {
+      vi.mocked(teamApi.getInvites).mockResolvedValue([mockInvite]);
+      const store = createStore();
+      await store.dispatch(fetchInvites('team-1'));
+      expect(store.getState().team.invites).toEqual([mockInvite]);
+      expect(store.getState().team.isLoadingInvites).toBe(false);
+    });
+
+    it('fetchInvites dispatches rejected on error', async () => {
+      vi.mocked(teamApi.getInvites).mockRejectedValue({ error: 'Not found' });
+      const store = createStore();
+      await store.dispatch(fetchInvites('team-1'));
+      expect(store.getState().team.error).toBe('Not found');
     });
   });
 });
