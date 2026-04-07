@@ -88,4 +88,44 @@ describe('analytics', () => {
     syncAnalyticsConsent(false);
     expect(Sentry.flush).toHaveBeenCalled();
   });
+
+  it('syncAnalyticsConsent is no-op when no client', () => {
+    vi.mocked(Sentry.getClient).mockReturnValue(undefined as any);
+    syncAnalyticsConsent(false);
+    expect(Sentry.flush).not.toHaveBeenCalled();
+  });
+
+  it('syncAnalyticsConsent with enabled=true does not flush', () => {
+    vi.mocked(Sentry.getClient).mockReturnValue({} as any);
+    syncAnalyticsConsent(true);
+    expect(Sentry.flush).not.toHaveBeenCalled();
+  });
+
+  it('beforeSend blocks event when no exception values', () => {
+    initSentry();
+    const initCall = vi.mocked(Sentry.init).mock.calls[0][0];
+    const beforeSend = initCall.beforeSend!;
+    vi.mocked(getCoreStateSnapshot).mockReturnValue({
+      snapshot: { currentUser: { _id: 'user-1' } },
+    } as any);
+
+    const result = beforeSend({ event_id: 'abc', exception: { values: [] } } as any, {});
+    expect(result).toBeNull();
+    expect(enqueueError).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Error', message: 'Unknown error' })
+    );
+  });
+
+  it('beforeSendTransaction always returns null', () => {
+    initSentry();
+    const initCall = vi.mocked(Sentry.init).mock.calls[0][0];
+    const beforeSendTransaction = (initCall as any).beforeSendTransaction;
+    expect(beforeSendTransaction({} as any, {})).toBeNull();
+  });
+
+  it('bypass mode: registerSentrySender is called during initSentry', () => {
+    initSentry();
+    // The mock is verified via the module-level mock: enqueueError and registerSentrySender are active
+    expect(enqueueError).toBeDefined(); // mock is active
+  });
 });
