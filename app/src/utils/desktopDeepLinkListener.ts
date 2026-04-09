@@ -106,7 +106,10 @@ const normalizeInternalRoutePath = (rawPath: string | null): string | null => {
 const handleNavigateDeepLink = async (parsed: URL) => {
   const targetPath = normalizeInternalRoutePath(parsed.searchParams.get('path'));
   if (!targetPath) {
-    console.warn('[DeepLink][navigate] invalid or unsupported path', parsed.searchParams.get('path'));
+    console.warn(
+      '[DeepLink][navigate] invalid or unsupported path',
+      parsed.searchParams.get('path')
+    );
     return;
   }
 

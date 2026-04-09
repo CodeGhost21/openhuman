@@ -149,9 +149,10 @@ export async function triggerDeepLink(url: string): Promise<void> {
 
     let appActivated = false;
     try {
-      await browser.execute('macos: activateApp', {
-        bundleId: 'com.openhuman.app',
-      } as Record<string, unknown>);
+      await browser.execute('macos: activateApp', { bundleId: 'com.openhuman.app' } as Record<
+        string,
+        unknown
+      >);
       appActivated = true;
       deepLinkDebug('macos: activateApp OK');
     } catch (err) {
@@ -160,9 +161,10 @@ export async function triggerDeepLink(url: string): Promise<void> {
 
     if (!appActivated) {
       try {
-        await browser.execute('macos: launchApp', {
-          bundleId: 'com.openhuman.app',
-        } as Record<string, unknown>);
+        await browser.execute('macos: launchApp', { bundleId: 'com.openhuman.app' } as Record<
+          string,
+          unknown
+        >);
         appActivated = true;
         deepLinkDebug('macos: launchApp OK');
       } catch (err) {

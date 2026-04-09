@@ -273,7 +273,7 @@ describe('Conversations web channel flow', () => {
         stepLog(
           'Mac2: login page visible after navigating to conversations — auth state lost. Tree:',
           tree.slice(0, 4000)
-      );
+        );
         throw new Error('Mac2: app showed login page instead of conversations surface');
       }
 

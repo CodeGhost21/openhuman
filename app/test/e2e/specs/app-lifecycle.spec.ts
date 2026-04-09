@@ -517,8 +517,9 @@ describe('0.2 Installation & Launch', () => {
         `codesign --verify --deep --verbose=1 "${appPath}" 2>&1`
       );
       const combined = `${stdout} ${stderr}`.toLowerCase();
-      const knownDebugResourceMismatch =
-        combined.includes('code has no resources but signature indicates they must be present');
+      const knownDebugResourceMismatch = combined.includes(
+        'code has no resources but signature indicates they must be present'
+      );
       console.log(
         `[AppLifecycle][0.2.3] codesign --verify: success=${success} output=${(stdout + stderr).slice(0, 300)}`
       );

@@ -129,7 +129,11 @@ async function clickResolvedElement(
       if (!/stale|wasn't found|getElementRect/i.test(message) || attempt === 2) {
         throw error;
       }
-      console.log('[E2E][elements] retrying click after stale element', { label, attempt, message });
+      console.log('[E2E][elements] retrying click after stale element', {
+        label,
+        attempt,
+        message,
+      });
       await browser.pause(250);
     }
   }

@@ -12,10 +12,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
-import {
-  triggerAuthDeepLinkBypass,
-  triggerDeepLink,
-} from '../helpers/deep-link-helpers';
+import { triggerAuthDeepLinkBypass, triggerDeepLink } from '../helpers/deep-link-helpers';
 import { textExists, waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
 import {
   completeOnboardingIfVisible,

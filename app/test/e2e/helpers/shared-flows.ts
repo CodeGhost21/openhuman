@@ -564,9 +564,7 @@ export async function logoutViaSettings(logPrefix = '[E2E]') {
         await swipeUpMac2(logPrefix);
         clicked = await clickFirstButtonOrText(logoutCandidates, 2_500);
         if (clicked) {
-          console.log(
-            `${logPrefix} Logout action became visible after swipe ${swipeAttempt}/5`
-          );
+          console.log(`${logPrefix} Logout action became visible after swipe ${swipeAttempt}/5`);
           break;
         }
       }

@@ -168,7 +168,12 @@ describe('Voice mode integration', () => {
 
     if (isMac2()) {
       const hasVoiceSurface = await waitForAnyText(
-        ['Switch to voice input', 'Start Talking', 'Could not check voice availability', 'Conversations'],
+        [
+          'Switch to voice input',
+          'Start Talking',
+          'Could not check voice availability',
+          'Conversations',
+        ],
         10_000
       );
       expect(hasVoiceSurface).not.toBeNull();
