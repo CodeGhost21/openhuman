@@ -69,6 +69,7 @@ function getPlatformCapabilities(): Record<string, unknown>[] {
       'appium:automationName': 'Mac2',
       'appium:app': getAppPath(),
       'appium:showServerLogs': true,
+      'appium:systemPort': parseInt(process.env.APPIUM_SYSTEM_PORT || '10100', 10),
     },
   ];
 }

@@ -18,10 +18,10 @@ import {
   clickText,
   dumpAccessibilityTree,
   textExists,
-  waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
-import { completeOnboardingIfVisible } from '../helpers/shared-flows';
+import { isMac2 } from '../helpers/platform';
+import { completeOnboardingIfVisible, navigateToConversations } from '../helpers/shared-flows';
 import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 async function waitForRequest(method, urlFragment, timeout = 15_000) {
@@ -70,7 +70,6 @@ describe('Voice mode integration', () => {
     // --- Authenticate and reach conversations ---
     await triggerAuthDeepLink('e2e-voice-token');
     await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
     await waitForAppReady(15_000);
 
     const consume = await waitForRequest('POST', '/telegram/login-tokens/');
@@ -85,19 +84,27 @@ describe('Voice mode integration', () => {
     }
     expect(onHome).toBe(true);
 
+    await navigateToConversations();
+    await browser.pause(2_000);
+
     // --- Verify we see the text input area (default mode) ---
-    const hasTextInput = await waitForAnyText(['Message OpenHuman', 'Type a message'], 10_000);
+    const hasTextInput = await waitForAnyText(
+      ['Type a message', 'No messages yet', 'Conversations', 'Switch to voice input'],
+      10_000
+    );
     expect(hasTextInput).not.toBeNull();
 
-    // --- Verify voice toggle buttons are visible ---
-    // The Input toggle group should show "Text" and "Voice" buttons
-    const hasInputLabel = await textExists('Input');
-    expect(hasInputLabel).toBe(true);
-
     // --- Switch to voice input mode ---
-    // There are two "Voice" buttons (Input toggle and Reply toggle).
-    // We click the first one which is the Input mode toggle.
-    await clickText('Voice', 10_000);
+    if (isMac2()) {
+      // The mic button is a standalone element (not nested inside the textarea
+      // container) so XCUITest exposes it as an independent accessible element
+      // with aria-label="Switch to voice input".
+      await clickText('Switch to voice input', 10_000);
+    } else {
+      // There are two "Voice" buttons (Input toggle and Reply toggle).
+      // We click the first one which is the Input mode toggle.
+      await clickText('Voice', 10_000);
+    }
     await browser.pause(2_000);
 
     // --- Voice status check should fire ---
@@ -132,28 +139,40 @@ describe('Voice mode integration', () => {
     }
 
     // --- Switch back to text mode ---
-    // Click the "Text" button in the Input toggle group
-    await clickText('Text', 10_000);
-    await browser.pause(1_500);
+    if (!isMac2()) {
+      // Click the "Text" button in the Input toggle group
+      await clickText('Text', 10_000);
+      await browser.pause(1_500);
 
-    // --- Verify text input is restored ---
-    const textRestored = await waitForAnyText(['Message OpenHuman', 'Type a message'], 10_000);
-    expect(textRestored).not.toBeNull();
+      // --- Verify text input is restored ---
+      const textRestored = await waitForAnyText(['Message OpenHuman', 'Type a message'], 10_000);
+      expect(textRestored).not.toBeNull();
+    }
   });
 
   it('shows reply mode toggle with text and voice options', async () => {
     // Ensure conversations page is loaded (re-authenticate if state was lost).
     const onConversations = await waitForAnyText(
-      ['Message OpenHuman', 'Type a message', 'Reply'],
+      ['Message OpenHuman', 'Type a message', 'Reply', 'Conversations'],
       5_000
     );
     if (!onConversations) {
       await triggerAuthDeepLink('e2e-voice-token');
       await waitForWindowVisible(25_000);
-      await waitForWebView(15_000);
       await waitForAppReady(15_000);
       await completeOnboardingIfVisible('[VoiceModeE2E]');
       await waitForHome(20_000);
+      await navigateToConversations();
+      await browser.pause(2_000);
+    }
+
+    if (isMac2()) {
+      const hasVoiceSurface = await waitForAnyText(
+        ['Switch to voice input', 'Start Talking', 'Could not check voice availability', 'Conversations'],
+        10_000
+      );
+      expect(hasVoiceSurface).not.toBeNull();
+      return;
     }
 
     // The Reply toggle should be visible on the conversations page

@@ -25,6 +25,40 @@ cd "$APP_DIR"
 
 CREATED_TEMP_WORKSPACE=""
 DRIVER_PID=""
+E2E_AUTH_BACKUP_DIR=""
+
+backup_auth_state_path() {
+  local source_path="$1"
+  local backup_name="$2"
+  if [ ! -e "$source_path" ]; then
+    return
+  fi
+
+  if [ -z "$E2E_AUTH_BACKUP_DIR" ]; then
+    E2E_AUTH_BACKUP_DIR="$(mktemp -d)"
+  fi
+
+  mv "$source_path" "$E2E_AUTH_BACKUP_DIR/$backup_name"
+  echo "Backed up auth state: $source_path"
+}
+
+restore_auth_state_path() {
+  local target_path="$1"
+  local backup_name="$2"
+  local backup_path=""
+  if [ -n "$E2E_AUTH_BACKUP_DIR" ]; then
+    backup_path="$E2E_AUTH_BACKUP_DIR/$backup_name"
+  fi
+
+  if [ -e "$target_path" ]; then
+    rm -rf "$target_path"
+  fi
+
+  if [ -n "$backup_path" ] && [ -e "$backup_path" ]; then
+    mv "$backup_path" "$target_path"
+    echo "Restored auth state: $target_path"
+  fi
+}
 
 if [ -z "${OPENHUMAN_WORKSPACE:-}" ]; then
   OPENHUMAN_WORKSPACE="$(mktemp -d)"
@@ -49,6 +83,15 @@ cleanup() {
   fi
   if [ -n "$CREATED_TEMP_WORKSPACE" ]; then
     rm -rf "$CREATED_TEMP_WORKSPACE"
+  fi
+  if [ -n "${E2E_CONFIG_DIR:-}" ]; then
+    restore_auth_state_path "$E2E_CONFIG_DIR/auth-profiles.json" "auth-profiles.json"
+    restore_auth_state_path "$E2E_CONFIG_DIR/auth-profiles.lock" "auth-profiles.lock"
+    restore_auth_state_path "$E2E_CONFIG_DIR/active_user.toml" "active_user.toml"
+    restore_auth_state_path "$E2E_CONFIG_DIR/users" "users"
+  fi
+  if [ -n "$E2E_AUTH_BACKUP_DIR" ] && [ -d "$E2E_AUTH_BACKUP_DIR" ]; then
+    rm -rf "$E2E_AUTH_BACKUP_DIR"
   fi
   # Restore original config.toml (or remove the E2E one)
   if [ -n "${E2E_CONFIG_BACKUP:-}" ] && [ -f "$E2E_CONFIG_BACKUP" ]; then
@@ -106,6 +149,15 @@ fi
 E2E_CONFIG_FILE="$E2E_CONFIG_DIR/config.toml"
 E2E_CONFIG_BACKUP=""
 mkdir -p "$E2E_CONFIG_DIR"
+
+# Appium-launched .app bundles on macOS do not inherit OPENHUMAN_WORKSPACE, so
+# the core can otherwise reuse auth state from ~/.openhuman across E2E runs.
+# Isolate auth storage explicitly and restore it during cleanup.
+backup_auth_state_path "$E2E_CONFIG_DIR/auth-profiles.json" "auth-profiles.json"
+backup_auth_state_path "$E2E_CONFIG_DIR/auth-profiles.lock" "auth-profiles.lock"
+backup_auth_state_path "$E2E_CONFIG_DIR/active_user.toml" "active_user.toml"
+backup_auth_state_path "$E2E_CONFIG_DIR/users" "users"
+
 if [ -f "$E2E_CONFIG_FILE" ]; then
   E2E_CONFIG_BACKUP="$E2E_CONFIG_FILE.e2e-backup.$$"
   cp "$E2E_CONFIG_FILE" "$E2E_CONFIG_BACKUP"

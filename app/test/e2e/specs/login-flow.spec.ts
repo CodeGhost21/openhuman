@@ -1,49 +1,29 @@
 // @ts-nocheck
 /**
- * E2E test: Complete login → onboarding → home flow via deep link (Linux / tauri-driver).
+ * E2E test: deep-link auth, onboarding completion, and session failure paths.
  *
- * Verifies the full auth + onboarding journey using mock data:
- *   Phase 1 — Deep link authentication:
- *     1. `openhuman://auth?token=...` deep link is triggered via __simulateDeepLink
- *     2. App calls POST /telegram/login-tokens/:token/consume  (mock server)
- *     3. App receives JWT, dispatches to Redux authSlice
- *     4. UserProvider calls GET /auth/me  (mock server)
- *
- *   Phase 2 — Onboarding steps (6 steps in Onboarding.tsx):
- *     Step 0: WelcomeStep       — "Continue"
- *     Step 1: LocalAIStep       — "Continue"
- *     Step 2: ScreenPermissions — "Continue Without Permission" or "Continue"
- *     Step 3: ToolsStep         — "Continue"
- *     Step 4: SkillsStep        — "Finish Setup"
- *     Step 5: MnemonicStep      — checkbox + "Finish Setup"
- *
- *   Phase 3 — Completion verification:
- *     - App calls POST /settings/onboarding-complete (from SkillsStep)
- *     - App navigates to #/home — greeting with mock user's name shown
- *
- *   Phase 4 — Error paths:
- *     - Expired token returns 401 and app does not navigate to home
- *     - Invalid token returns 401 and app does not navigate to home
- *
- *   Phase 5 — Bypass auth path:
- *     - `openhuman://auth?token=...&key=auth` sets token directly (no consume call)
- *
- * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
- * have been built with VITE_BACKEND_URL pointing there.
+ * Keeps coverage focused on the current shell behavior:
+ * - successful deep-link auth consumes the token and completes onboarding
+ * - expired and invalid tokens do not create a logged-in shell
+ * - bypass auth writes a session without the consume request
  */
-import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
-import { buildBypassJwt, triggerAuthDeepLink, triggerDeepLink } from '../helpers/deep-link-helpers';
 import {
-  clickText,
-  dumpAccessibilityTree,
-  hasAppChrome,
-  textExists,
-  waitForWebView,
-  waitForWindowVisible,
-} from '../helpers/element-helpers';
-import { isTauriDriver } from '../helpers/platform';
+  triggerAuthDeepLinkBypass,
+  triggerDeepLink,
+} from '../helpers/deep-link-helpers';
+import { textExists, waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
+import {
+  completeOnboardingIfVisible,
+  logoutViaSettings,
+  waitForHomePage,
+  waitForLoggedOutState,
+  waitForRequest,
+} from '../helpers/shared-flows';
 import {
   clearRequestLog,
   getRequestLog,
@@ -53,82 +33,76 @@ import {
   stopMockServer,
 } from '../mock-server';
 
-/**
- * Poll the mock server request log until a matching request appears.
- */
-async function waitForRequest(method, urlFragment, timeout = 15_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const log = getRequestLog();
-    const match = log.find(r => r.method === method && r.url.includes(urlFragment));
-    if (match) return match;
-    await browser.pause(500);
-  }
-  return undefined;
+function removePathIfPresent(targetPath: string) {
+  fs.rmSync(targetPath, { recursive: true, force: true });
 }
 
-/**
- * Wait until one of the candidate texts appears on screen.
- * Returns the matched text or null on timeout.
- */
-async function waitForAnyText(candidates, timeout = 15_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    for (const text of candidates) {
-      if (await textExists(text)) return text;
-    }
-    await browser.pause(500);
+async function resetAuthStateForMac2(logPrefix = '[LoginFlow]') {
+  if (process.platform !== 'darwin') {
+    await logoutViaSettings(logPrefix);
+    return;
   }
-  return null;
-}
 
-/**
- * Click the first matching text from a list of candidates.
- * Returns the clicked text or null if none found.
- */
-async function clickFirstMatch(candidates, timeout = 5_000) {
-  for (const text of candidates) {
-    if (await textExists(text)) {
-      await clickText(text, timeout);
-      return text;
-    }
-  }
-  return null;
-}
-
-/**
- * Verify Redux auth state via browser.execute (tauri-driver only).
- */
-async function getReduxAuthState() {
   try {
-    return await browser.execute(() => {
-      // Redux store is exposed on window.__REDUX_DEVTOOLS_EXTENSION__
-      // but we can read from localStorage where redux-persist stores auth
-      const persistedAuth = localStorage.getItem('persist:auth');
-      if (persistedAuth) {
-        try {
-          return JSON.parse(persistedAuth);
-        } catch {
-          return null;
-        }
-      }
-      return null;
-    });
-  } catch {
-    return null;
+    await browser.execute('macos: terminateApp', { bundleId: 'com.openhuman.app' } as Record<
+      string,
+      unknown
+    >);
+    console.log(`${logPrefix} Terminated app before resetting auth state`);
+  } catch (error) {
+    console.log(
+      `${logPrefix} Terminate app skipped during auth reset:`,
+      error instanceof Error ? error.message : error
+    );
+  }
+
+  await browser.pause(1_000);
+
+  const homeDir = os.homedir();
+  const openhumanDir = path.join(homeDir, '.openhuman');
+  const authPaths = [
+    path.join(openhumanDir, 'auth-profiles.json'),
+    path.join(openhumanDir, 'auth-profiles.lock'),
+    path.join(openhumanDir, 'active_user.toml'),
+    path.join(openhumanDir, 'users'),
+  ];
+  const shellPaths = [
+    path.join(homeDir, 'Library', 'WebKit', 'com.openhuman.app'),
+    path.join(homeDir, 'Library', 'Caches', 'com.openhuman.app'),
+    path.join(homeDir, 'Library', 'Application Support', 'com.openhuman.app'),
+    path.join(homeDir, 'Library', 'Saved Application State', 'com.openhuman.app.savedState'),
+  ];
+
+  for (const targetPath of [...authPaths, ...shellPaths]) {
+    removePathIfPresent(targetPath);
+    console.log(`${logPrefix} Cleared ${targetPath}`);
   }
 }
 
-// Track whether onboarding was walked through in the UI so Phase 3 can
-// decide whether to require the onboarding-complete backend call.
-let hadOnboardingWalkthrough = false;
+async function waitForShellAfterDeepLink() {
+  await waitForWindowVisible(25_000);
+  await waitForWebView(15_000);
+  await waitForAppReady(15_000);
+  await waitForAuthBootstrap(15_000);
+}
 
-describe('Login flow — complete with mock data (Linux)', () => {
+async function expectLoginFailureAndWelcomeScreen(urlFragment) {
+  const consumeCall = await waitForRequest(getRequestLog, 'POST', urlFragment, 20_000);
+  expect(consumeCall).toBeDefined();
+
+  const homeMarker = await waitForHomePage(5_000);
+  expect(homeMarker).toBeNull();
+
+  const welcomeMarker = await waitForLoggedOutState(10_000);
+  expect(welcomeMarker).not.toBeNull();
+}
+
+describe('1.x Deep-Link Auth & Onboarding', () => {
   before(async () => {
     await startMockServer();
     await waitForApp();
+    resetMockBehavior();
     clearRequestLog();
-    hadOnboardingWalkthrough = false;
   });
 
   after(async () => {
@@ -136,386 +110,83 @@ describe('Login flow — complete with mock data (Linux)', () => {
     await stopMockServer();
   });
 
-  // -----------------------------------------------------------------------
-  // Phase 1: Deep link authentication
-  // -----------------------------------------------------------------------
+  it('successful deep-link auth consumes the token, completes onboarding, and lands on home', async () => {
+    clearRequestLog();
+    resetMockBehavior();
 
-  it('app process is running and has a window handle', async () => {
-    const hasChrome = await hasAppChrome();
-    expect(hasChrome).toBe(true);
-  });
+    await triggerDeepLink('openhuman://auth?token=e2e-login-flow-token');
+    await waitForShellAfterDeepLink();
 
-  it('deep link triggers login and shows the app window', async () => {
-    await triggerAuthDeepLink('e2e-test-token');
-
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await waitForAuthBootstrap(15_000);
-  });
-
-  it('mock server received the token-consume call', async () => {
-    const call = await waitForRequest('POST', '/telegram/login-tokens/', 20_000);
-    if (!call) {
-      console.log(
-        '[LoginFlow] Missing consume call. Request log:',
-        JSON.stringify(getRequestLog(), null, 2)
-      );
-    }
-    expect(call).toBeDefined();
-  });
-
-  it('mock server received the user-profile call', async () => {
-    const deadline = Date.now() + 15_000;
-    let call;
-    while (Date.now() < deadline) {
-      const log = getRequestLog();
-      call = log.find(
-        r => r.method === 'GET' && (r.url.includes('/auth/me') || r.url.includes('/settings'))
-      );
-      if (call) break;
-      await browser.pause(500);
-    }
-    if (!call) {
-      console.log('[LoginFlow] Request log:', JSON.stringify(getRequestLog(), null, 2));
-    }
-    expect(call).toBeDefined();
-  });
-
-  it('Redux auth state has a token after login', async () => {
-    const authState = await getReduxAuthState();
-    if (authState) {
-      const token =
-        typeof authState.token === 'string' ? authState.token.replace(/^"|"$/g, '') : null;
-      console.log('[LoginFlow] Redux auth token present:', !!token);
-      expect(token).toBeTruthy();
-    } else {
-      console.log('[LoginFlow] Could not read Redux auth state (persist format may differ)');
-      // Non-fatal: the token-consume mock call was verified above
-    }
-  });
-
-  // -----------------------------------------------------------------------
-  // Phase 2: Onboarding (real step walkthrough)
-  //
-  // Onboarding.tsx renders as a portal overlay. On tauri-driver (Linux),
-  // browser.execute() works, so we can interact with the WebView DOM.
-  //
-  // Steps in order:
-  //   0: WelcomeStep       — "Continue" button
-  //   1: LocalAIStep       — "Continue"
-  //   2: ScreenPermissions — "Continue Without Permission" or "Continue"
-  //   3: ToolsStep         — "Continue" button
-  //   4: SkillsStep        — "Finish Setup" button (fires onboarding-complete)
-  //   5: MnemonicStep      — checkbox + "Finish Setup" button
-  // -----------------------------------------------------------------------
-
-  it('onboarding overlay or home page is visible', async () => {
-    await browser.pause(3_000);
-
-    // Real onboarding step markers
-    const onboardingCandidates = [
-      'Welcome', // WelcomeStep heading
-      'Skip', // Onboarding defer button (top-right)
-      'Continue', // WelcomeStep CTA
-    ];
-    const homeCandidates = ['Home', 'Skills', 'Conversations'];
-
-    const foundOnboarding = await waitForAnyText(onboardingCandidates, 5_000);
-    if (foundOnboarding) {
-      console.log(`[LoginFlow] Onboarding visible: "${foundOnboarding}"`);
-    }
-
-    const foundHome = !foundOnboarding ? await waitForAnyText(homeCandidates, 5_000) : null;
-    if (foundHome) {
-      console.log(
-        `[LoginFlow] Home page visible: "${foundHome}" (onboarding may be deferred/completed)`
-      );
-    }
-
-    expect(foundOnboarding || foundHome).toBeTruthy();
-  });
-
-  it('walk through onboarding steps (if overlay is visible)', async () => {
-    // Check if we're on the WelcomeStep or any onboarding step
-    const onboardingVisible =
-      (await textExists('Welcome')) ||
-      (await textExists('Skip')) ||
-      (await textExists('Continue')) ||
-      (await textExists('Finish Setup'));
-
-    if (!onboardingVisible) {
-      console.log('[LoginFlow] Onboarding overlay not visible — skipping step walkthrough');
-      hadOnboardingWalkthrough = false;
-      return;
-    }
-
-    hadOnboardingWalkthrough = true;
-
-    // Step 0: WelcomeStep — click "Continue"
-    if (await textExists('Welcome')) {
-      const clicked = await clickFirstMatch(['Continue'], 10_000);
-      console.log(`[LoginFlow] WelcomeStep: clicked "${clicked}"`);
-      await browser.pause(2_000);
-    }
-
-    // Step 1: LocalAIStep — "Continue" button
-    {
-      const clicked = await clickFirstMatch(['Continue'], 10_000);
-      if (clicked) {
-        console.log(`[LoginFlow] LocalAIStep: clicked "${clicked}"`);
-        await browser.pause(2_000);
-      }
-    }
-
-    // Step 2: ScreenPermissionsStep — click "Continue Without Permission" (no accessibility on Linux CI)
-    {
-      const clicked = await clickFirstMatch(['Continue Without Permission', 'Continue'], 10_000);
-      if (clicked) {
-        console.log(`[LoginFlow] ScreenPermissionsStep: clicked "${clicked}"`);
-        await browser.pause(2_000);
-      }
-    }
-
-    // Step 3: ToolsStep — click "Continue" (keep defaults)
-    {
-      const toolsVisible = await textExists('Enable Tools');
-      if (toolsVisible) {
-        const clicked = await clickFirstMatch(['Continue'], 10_000);
-        if (clicked) {
-          console.log(`[LoginFlow] ToolsStep: clicked "${clicked}"`);
-          await browser.pause(2_000);
-        }
-      }
-    }
-
-    // Step 4: SkillsStep — click "Continue" (no skills connected in E2E)
-    {
-      const skillsVisible = await textExists('Install Skills');
-      if (skillsVisible) {
-        const clicked = await clickFirstMatch(['Continue'], 10_000);
-        if (clicked) {
-          console.log(`[LoginFlow] SkillsStep: clicked "${clicked}"`);
-          await browser.pause(3_000);
-        }
-      }
-    }
-
-    // Step 5: MnemonicStep — tick the checkbox and click "Finish Setup"
-    {
-      const mnemonicVisible = await textExists('Your Recovery Phrase');
-      if (mnemonicVisible) {
-        console.log('[LoginFlow] MnemonicStep: visible');
-
-        // Tick the "I have saved my recovery phrase" checkbox
-        try {
-          const checked = await browser.execute(() => {
-            const checkbox = document.querySelector('input[type="checkbox"]') as HTMLInputElement;
-            if (checkbox && !checkbox.checked) {
-              checkbox.click();
-              return true;
-            }
-            return checkbox?.checked ?? false;
-          });
-          console.log(`[LoginFlow] MnemonicStep: checkbox checked=${checked}`);
-        } catch (err) {
-          console.log('[LoginFlow] MnemonicStep: checkbox click failed:', err);
-        }
-
-        await browser.pause(1_000);
-        const clicked = await clickFirstMatch(['Finish Setup'], 10_000);
-        if (clicked) {
-          console.log(`[LoginFlow] MnemonicStep: clicked "${clicked}"`);
-          await browser.pause(3_000);
-        }
-      }
-    }
-  });
-
-  // -----------------------------------------------------------------------
-  // Phase 3: Verify completion
-  // -----------------------------------------------------------------------
-
-  it('mock server received the onboarding-complete call (if onboarding was walked)', async () => {
-    if (!hadOnboardingWalkthrough) {
-      console.log(
-        '[LoginFlow] Onboarding was not walked (overlay not visible) — skipping assertion'
-      );
-      return;
-    }
-
-    const log = getRequestLog();
-    // The app calls POST /settings/onboarding-complete (via userApi.onboardingComplete)
-    // The mock may handle it at /telegram/settings/onboarding-complete or /settings/onboarding-complete
-    const call = log.find(
-      r =>
-        r.method === 'POST' &&
-        (r.url.includes('/settings/onboarding-complete') ||
-          r.url.includes('/telegram/settings/onboarding-complete'))
+    const consumeCall = await waitForRequest(
+      getRequestLog,
+      'POST',
+      '/telegram/login-tokens/',
+      20_000
     );
-    if (call) {
-      console.log('[LoginFlow] onboarding-complete call verified');
-    } else {
-      // The call may go through the core sidecar RPC relay rather than direct HTTP,
-      // so it might not appear in the mock request log. Log but don't fail.
+    expect(consumeCall).toBeDefined();
+
+    const profileCall =
+      (await waitForRequest(getRequestLog, 'GET', '/auth/me', 10_000)) ||
+      (await waitForRequest(getRequestLog, 'GET', '/settings', 10_000));
+    expect(profileCall).toBeDefined();
+
+    await completeOnboardingIfVisible('[LoginFlow]');
+
+    const onboardingCompleteCall =
+      (await waitForRequest(getRequestLog, 'POST', '/settings/onboarding-complete', 10_000)) ||
+      (await waitForRequest(
+        getRequestLog,
+        'POST',
+        '/telegram/settings/onboarding-complete',
+        10_000
+      ));
+    if (!onboardingCompleteCall) {
       console.log(
-        '[LoginFlow] onboarding-complete call not in mock log (may have gone through core RPC)'
+        '[LoginFlow] onboarding-complete request not observed; continuing because this call is best-effort in the current UI flow'
       );
-      console.log('[LoginFlow] Request log:', JSON.stringify(log, null, 2));
-    }
-  });
-
-  it('app navigated to Home page after onboarding', async () => {
-    const nameCandidates = [
-      'Test',
-      'Good morning',
-      'Good afternoon',
-      'Good evening',
-      'Message OpenHuman',
-      'Upgrade to Premium',
-    ];
-
-    const foundText = await waitForAnyText(nameCandidates, 15_000);
-
-    if (foundText) {
-      console.log(`[LoginFlow] Home page confirmed: found "${foundText}"`);
-    } else {
-      const tree = await dumpAccessibilityTree();
-      console.log('[LoginFlow] Home page text not found. Tree:\n', tree.slice(0, 4000));
     }
 
-    expect(foundText).not.toBeNull();
+    const homeMarker = await waitForHomePage(15_000);
+    expect(homeMarker).not.toBeNull();
   });
 
-  // -----------------------------------------------------------------------
-  // Phase 4: Error paths — expired and invalid tokens
-  // -----------------------------------------------------------------------
-
-  it('expired token triggers consume call that returns 401', async () => {
-    // Note: The app is already authenticated from Phase 1-3. In a single-instance
-    // Tauri desktop app, we cannot fully reset the in-memory Redux state between
-    // tests. This test verifies that the expired token deep link triggers the
-    // consume call and the mock rejects it with 401.
+  it('expired login tokens do not enter the authenticated shell', async () => {
+    await resetAuthStateForMac2('[LoginFlow]');
     clearRequestLog();
     setMockBehavior('token', 'expired');
 
-    await triggerDeepLink('openhuman://auth?token=expired-test-token');
-    await browser.pause(5_000);
-
-    // Verify the consume call was made (mock returns 401 for expired tokens)
-    const call = await waitForRequest('POST', '/telegram/login-tokens/', 10_000);
-    expect(call).toBeDefined();
-    console.log('[LoginFlow] Expired token: consume call made (mock returns 401)');
-
-    // The app should not have navigated away — prior session remains intact.
-    // We verify the deep link handler attempted the consume and it was rejected.
-    resetMockBehavior();
+    await triggerDeepLink('openhuman://auth?token=e2e-login-expired-token');
+    await waitForShellAfterDeepLink();
+    await expectLoginFailureAndWelcomeScreen('/telegram/login-tokens/');
   });
 
-  it('invalid token triggers consume call that returns 401', async () => {
+  it('invalid login tokens do not enter the authenticated shell', async () => {
+    await resetAuthStateForMac2('[LoginFlow]');
     clearRequestLog();
+    resetMockBehavior();
     setMockBehavior('token', 'invalid');
 
-    await triggerDeepLink('openhuman://auth?token=invalid-test-token');
-    await browser.pause(5_000);
-
-    // Verify the consume call was made (mock returns 401 for invalid tokens)
-    const call = await waitForRequest('POST', '/telegram/login-tokens/', 10_000);
-    expect(call).toBeDefined();
-    console.log('[LoginFlow] Invalid token: consume call made (mock returns 401)');
-
-    resetMockBehavior();
+    await triggerDeepLink('openhuman://auth?token=e2e-login-invalid-token');
+    await waitForShellAfterDeepLink();
+    await expectLoginFailureAndWelcomeScreen('/telegram/login-tokens/');
   });
 
-  // -----------------------------------------------------------------------
-  // Phase 5: Bypass auth path (key=auth)
-  // -----------------------------------------------------------------------
-
-  it('bypass auth deep link sets token directly without consume call', async () => {
-    // Clear auth state so we start unauthenticated — prevents stale session
+  it('bypass auth creates a session without calling the token consume endpoint', async () => {
+    await resetAuthStateForMac2('[LoginFlowBypass]');
     clearRequestLog();
     resetMockBehavior();
 
-    if (isTauriDriver()) {
-      // tauri-driver (Linux/Windows): clear persisted web storage and reload so
-      // the in-memory auth state is rebuilt from an unauthenticated baseline.
-      await browser.execute(() => {
-        localStorage.removeItem('persist:auth');
-        sessionStorage.clear();
-        window.location.reload();
-      });
-      await waitForAppReady(20_000);
-      console.log('[LoginFlow] Bypass auth: cleared web storage and reloaded app (Linux/Windows)');
-    } else {
-      // Appium Mac2 (macOS): browser.execute() is not supported for DOM access.
-      // Terminate the app, wipe WebKit storage, and relaunch for a clean slate.
-      try {
-        await browser.execute('macos: terminateApp', { bundleId: 'com.openhuman.app' });
-      } catch {
-        // ignore if already stopped
-      }
-      await browser.pause(500);
-      try {
-        execSync(
-          'rm -rf "$HOME/Library/WebKit/com.openhuman.app" "$HOME/Library/Caches/com.openhuman.app" "$HOME/Library/Application Support/com.openhuman.app"',
-          { shell: '/bin/bash' }
-        );
-      } catch {
-        // best-effort cleanup
-      }
-      await browser.execute('macos: launchApp', { bundleId: 'com.openhuman.app' });
-      await waitForAppReady(20_000);
-      console.log('[LoginFlow] Bypass auth: app relaunched fresh (macOS)');
-    }
+    await triggerAuthDeepLinkBypass('e2e-login-bypass-token');
+    await waitForShellAfterDeepLink();
+    await completeOnboardingIfVisible('[LoginFlowBypass]');
 
-    const bypassJwt = buildBypassJwt('e2e-bypass-user');
-
-    // Trigger bypass deep link (key=auth skips token consume)
-    await triggerDeepLink(`openhuman://auth?token=${encodeURIComponent(bypassJwt)}&key=auth`);
-    await browser.pause(5_000);
-
-    // Assert NO consume call was made (bypass skips it)
     const consumeCall = getRequestLog().find(
-      r => r.method === 'POST' && r.url.includes('/telegram/login-tokens/')
+      request => request.method === 'POST' && request.url.includes('/telegram/login-tokens/')
     );
     expect(consumeCall).toBeUndefined();
-    console.log('[LoginFlow] Bypass auth: no consume call (correct — token set directly)');
 
-    // Assert the app navigated to home (post-login UI marker)
-    const homeCandidates = [
-      'Good morning',
-      'Good afternoon',
-      'Good evening',
-      'Message OpenHuman',
-      'Home',
-    ];
-    const foundHome = await waitForAnyText(homeCandidates, 15_000);
-    expect(foundHome).not.toBeNull();
-    console.log(`[LoginFlow] Bypass auth: home reached with "${foundHome}"`);
-
-    // Assert Redux token was persisted in localStorage
-    // On Mac2 (Appium), browser.execute() is not available for DOM reads.
-    // The successful navigation to home is sufficient evidence that the token
-    // was set — skip the explicit localStorage check on that platform.
-    if (isTauriDriver()) {
-      const tokenSet = await browser.execute(() => {
-        const persisted = localStorage.getItem('persist:auth');
-        if (!persisted) return false;
-        try {
-          const parsed = JSON.parse(persisted);
-          const token =
-            typeof parsed.token === 'string' ? parsed.token.replace(/^"|"$/g, '') : null;
-          return !!token && token !== 'null';
-        } catch {
-          return false;
-        }
-      });
-      expect(tokenSet).toBe(true);
-      console.log('[LoginFlow] Bypass auth: Redux token present in localStorage');
-    } else {
-      console.log(
-        '[LoginFlow] Bypass auth: localStorage check skipped on macOS (Appium Mac2 does not support execute/sync)'
-      );
-    }
+    const homeMarker = await waitForHomePage(15_000);
+    expect(homeMarker).not.toBeNull();
+    expect(await textExists('Message OpenHuman')).toBe(true);
   });
 });

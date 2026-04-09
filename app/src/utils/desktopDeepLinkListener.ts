@@ -9,6 +9,23 @@ import { startSkill } from '../lib/skills/skillsApi';
 import { consumeLoginToken } from '../services/api/authApi';
 import { storeSession } from './tauriCommands';
 
+let lastHandledDeepLinkUrl: string | null = null;
+const INTERNAL_ROUTE_PREFIXES = [
+  '/',
+  '/home',
+  '/onboarding',
+  '/mnemonic',
+  '/skills',
+  '/conversations',
+  '/intelligence',
+  '/channels',
+  '/invites',
+  '/rewards',
+  '/agents',
+  '/webhooks',
+  '/settings',
+] as const;
+
 const focusMainWindow = async () => {
   try {
     const window = getCurrentWindow();
@@ -65,6 +82,37 @@ const handleAuthDeepLink = async (parsed: URL) => {
     console.log('[DeepLink][auth] login token consumed');
     window.location.hash = '/home';
   }
+};
+
+const normalizeInternalRoutePath = (rawPath: string | null): string | null => {
+  if (!rawPath) return null;
+  const trimmed = rawPath.trim();
+  if (!trimmed.startsWith('/')) return null;
+  if (trimmed.includes('://')) return null;
+
+  const normalized = trimmed === '/' ? '/' : trimmed.replace(/\/+$/, '');
+  return INTERNAL_ROUTE_PREFIXES.some(
+    prefix => normalized === prefix || normalized.startsWith(`${prefix}/`)
+  )
+    ? normalized
+    : null;
+};
+
+/**
+ * Handle `openhuman://navigate?path=/conversations` deep links.
+ * This is used by the desktop shell and E2E to move between internal routes
+ * without depending on brittle accessibility clicks.
+ */
+const handleNavigateDeepLink = async (parsed: URL) => {
+  const targetPath = normalizeInternalRoutePath(parsed.searchParams.get('path'));
+  if (!targetPath) {
+    console.warn('[DeepLink][navigate] invalid or unsupported path', parsed.searchParams.get('path'));
+    return;
+  }
+
+  await focusMainWindow();
+  console.log('[DeepLink][navigate] routing', { path: targetPath });
+  window.location.hash = targetPath;
 };
 
 /**
@@ -171,6 +219,14 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
   }
 
   const url = urls[0];
+  if (!url) {
+    return;
+  }
+
+  if (url === lastHandledDeepLinkUrl) {
+    console.log('[DeepLink] Skipping duplicate URL', url);
+    return;
+  }
 
   try {
     const parsed = new URL(url);
@@ -179,9 +235,14 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
       return;
     }
 
+    console.log('[DeepLink] Handling URL', url);
+
     switch (parsed.hostname) {
       case 'auth':
         await handleAuthDeepLink(parsed);
+        break;
+      case 'navigate':
+        await handleNavigateDeepLink(parsed);
         break;
       case 'oauth':
         await handleOAuthDeepLink(parsed);
@@ -193,8 +254,21 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
         console.warn('[DeepLink] Unknown deep link hostname:', parsed.hostname);
         break;
     }
+    lastHandledDeepLinkUrl = url;
   } catch (error) {
     console.error('[DeepLink] Failed to handle deep link URL:', url, error);
+  }
+};
+
+const pollCurrentDeepLink = async (reason: string) => {
+  try {
+    const currentUrls = await getCurrent();
+    if (currentUrls?.length) {
+      console.log('[DeepLink] Polled current URL(s)', { reason, count: currentUrls.length });
+    }
+    await handleDeepLinkUrls(currentUrls);
+  } catch (error) {
+    console.warn('[DeepLink] getCurrent poll failed:', { reason, error });
   }
 };
 
@@ -210,16 +284,23 @@ export const setupDesktopDeepLinkListener = async () => {
   }
 
   try {
-    const startUrls = await getCurrent();
-    if (startUrls) {
-      await handleDeepLinkUrls(startUrls);
-    }
+    await pollCurrentDeepLink('startup');
 
     await onOpenUrl(urls => {
+      console.log('[DeepLink] onOpenUrl event received', { count: urls?.length ?? 0 });
       void handleDeepLinkUrls(urls);
     });
 
     if (typeof window !== 'undefined') {
+      window.addEventListener('focus', () => {
+        void pollCurrentDeepLink('window.focus');
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          void pollCurrentDeepLink('document.visible');
+        }
+      });
+
       // window.__simulateDeepLink('openhuman://auth?token=1234567890')
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&skillId=notion')
       const win = window as Window & { __simulateDeepLink?: (url: string) => Promise<void> };

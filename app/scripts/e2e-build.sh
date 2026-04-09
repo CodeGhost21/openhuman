@@ -49,6 +49,21 @@ TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false}}'
 # Tauri CLI maps env CI to --ci and only accepts true|false; some runners set CI=1.
 case "${CI:-}" in 1) export CI=true ;; 0) export CI=false ;; esac
 
+# Resolve Tauri CLI via Node.js module resolution — handles both workspace-local
+# and Yarn-hoisted package locations, and returns a native Windows path on Windows
+# (avoiding Git Bash Unix-path → Windows-path conversion issues with node_modules).
+TAURI_NODE_BIN="$(command -v node)"
+if [ -z "${TAURI_NODE_BIN:-}" ]; then
+  echo "ERROR: node not found in PATH." >&2
+  exit 1
+fi
+TAURI_CLI_JS="$("$TAURI_NODE_BIN" -e "process.stdout.write(require.resolve('@tauri-apps/cli/tauri.js'))" 2>/dev/null || true)"
+if [ -z "${TAURI_CLI_JS:-}" ]; then
+  echo "ERROR: Cannot resolve @tauri-apps/cli/tauri.js — run 'yarn install --frozen-lockfile' first." >&2
+  exit 1
+fi
+echo "Tauri CLI resolved: $TAURI_CLI_JS"
+
 OS="$(uname)"
 # Normalize Windows (Git Bash / MSYS2 / Cygwin) to a single token
 case "$OS" in MINGW*|MSYS*|CYGWIN*) OS="Windows" ;; esac
@@ -56,15 +71,15 @@ case "$OS" in MINGW*|MSYS*|CYGWIN*) OS="Windows" ;; esac
 if [ "$OS" = "Linux" ]; then
   # Linux: debug binary only — tauri-driver drives the raw binary, no bundle needed
   echo "Building for Linux (debug binary, no bundle)..."
-  npx tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
+  "$TAURI_NODE_BIN" "$TAURI_CLI_JS" build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
 elif [ "$OS" = "Windows" ]; then
   # Windows: debug binary only — tauri-driver drives OpenHuman.exe directly
   echo "Building for Windows (debug binary, no bundle)..."
-  npx tauri build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
+  "$TAURI_NODE_BIN" "$TAURI_CLI_JS" build -c "$TAURI_CONFIG_OVERRIDE" --debug --no-bundle
 else
   # macOS: .app bundle required for Appium Mac2 / XCUITest
   echo "Building for macOS (.app bundle)..."
-  npx tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug
+  "$TAURI_NODE_BIN" "$TAURI_CLI_JS" build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug
 fi
 
 echo "E2E build complete."

@@ -109,8 +109,9 @@ async function trySimulateDeepLinkInWebView(url: string): Promise<boolean> {
 }
 
 function resolveBuiltAppPath(): string | null {
-  const repoRoot = process.cwd();
-  const appDir = path.join(repoRoot, 'app');
+  const cwd = process.cwd();
+  const repoRoot = path.basename(cwd) === 'app' ? path.resolve(cwd, '..') : cwd;
+  const appDir = path.basename(cwd) === 'app' ? cwd : path.join(repoRoot, 'app');
   const candidates = [
     path.join(appDir, 'src-tauri', 'target', 'debug', 'bundle', 'macos', 'OpenHuman.app'),
     path.join(repoRoot, 'target', 'debug', 'bundle', 'macos', 'OpenHuman.app'),
@@ -146,15 +147,33 @@ export async function triggerDeepLink(url: string): Promise<void> {
       return;
     }
 
+    let appActivated = false;
     try {
-      await browser.execute('macos: launchApp', {
+      await browser.execute('macos: activateApp', {
         bundleId: 'com.openhuman.app',
-        arguments: [url],
       } as Record<string, unknown>);
-      deepLinkDebug('macos: launchApp OK');
+      appActivated = true;
+      deepLinkDebug('macos: activateApp OK');
     } catch (err) {
-      deepLinkDebug('macos: launchApp failed', err instanceof Error ? err.message : err);
+      deepLinkDebug('macos: activateApp failed', err instanceof Error ? err.message : err);
     }
+
+    if (!appActivated) {
+      try {
+        await browser.execute('macos: launchApp', {
+          bundleId: 'com.openhuman.app',
+        } as Record<string, unknown>);
+        appActivated = true;
+        deepLinkDebug('macos: launchApp OK');
+      } catch (err) {
+        deepLinkDebug('macos: launchApp failed', err instanceof Error ? err.message : err);
+      }
+    }
+
+    if (appActivated) {
+      await browser.pause(500);
+    }
+
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
         await browser.execute('macos: deepLink', { url, bundleId: 'com.openhuman.app' } as Record<
@@ -162,7 +181,7 @@ export async function triggerDeepLink(url: string): Promise<void> {
           unknown
         >);
         deepLinkDebug('macos: deepLink OK', { attempt });
-        await browser.pause(300);
+        await browser.pause(750);
         return;
       } catch (err) {
         deepLinkDebug('macos: deepLink failed', {
@@ -189,16 +208,6 @@ export async function triggerDeepLink(url: string): Promise<void> {
   }
 
   // macOS shell fallback
-  if (appPath) {
-    try {
-      await execCommand(`open -a "${appPath}"`);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      deepLinkDebug(`open -a "${appPath}" OK`);
-    } catch (err) {
-      deepLinkDebug('open -a app failed', err instanceof Error ? err.message : err);
-    }
-  }
-
   let openError: unknown = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
@@ -240,6 +249,13 @@ export function triggerAuthDeepLink(token: string): Promise<void> {
   }
 
   return triggerDeepLink(`openhuman://auth?token=${encodeURIComponent(token)}`);
+}
+
+export function triggerAppRouteDeepLink(routePath: string): Promise<void> {
+  const normalized = routePath.startsWith('/') ? routePath : `/${routePath}`;
+  return triggerDeepLink(
+    `openhuman://navigate?path=${encodeURIComponent(normalized)}&ts=${Date.now()}`
+  );
 }
 
 function toBase64Url(value: string): string {

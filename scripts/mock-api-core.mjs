@@ -268,7 +268,8 @@ async function handleRequest(req, res) {
 
   if (
     method === "GET" &&
-    (/^\/telegram\/me\/?(\?.*)?$/.test(url) || /^\/auth\/me\/?(\?.*)?$/.test(url))
+    (/^\/telegram\/me\/?(\?.*)?$/.test(url) ||
+      /^\/auth\/me\/?(\?.*)?$/.test(url))
   ) {
     const delayMs = getDelayMs("telegramMeDelayMs");
     if (delayMs > 0) {
@@ -416,6 +417,10 @@ async function handleRequest(req, res) {
     (/^\/payments\/stripe\/checkout\/?$/.test(url) ||
       /^\/payments\/stripe\/purchasePlan\/?$/.test(url))
   ) {
+    const delayMs = getDelayMs("purchaseDelayMs");
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
     if (mockBehavior.purchaseError === "true") {
       json(res, 500, { success: false, error: "Payment service unavailable" });
       return;
@@ -441,6 +446,10 @@ async function handleRequest(req, res) {
   }
 
   if (method === "POST" && /^\/payments\/coinbase\/charge\/?$/.test(url)) {
+    const delayMs = getDelayMs("coinbaseChargeDelayMs");
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
     if (mockBehavior.coinbaseError === "true") {
       json(res, 500, { success: false, error: "Coinbase service unavailable" });
       return;

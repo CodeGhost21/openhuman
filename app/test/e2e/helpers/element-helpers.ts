@@ -26,11 +26,13 @@ import { isTauriDriver } from './platform';
 // ---------------------------------------------------------------------------
 
 function xpathStringLiteral(text: string): string {
-  if (!text.includes('"')) return `"${text}"`;
-  if (!text.includes("'")) return `'${text}'`;
+  // Appium Mac2's XPath parser expects XML entities in string literals.
+  const escaped = text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  if (!escaped.includes('"')) return `"${escaped}"`;
+  if (!escaped.includes("'")) return `'${escaped}'`;
   const parts: string[] = [];
   let current = '';
-  for (const ch of text) {
+  for (const ch of escaped) {
     if (ch === '"') {
       if (current) parts.push(`"${current}"`);
       parts.push("'\"'");
@@ -109,6 +111,29 @@ async function clickAtElement(el: ChainablePromiseElement): Promise<void> {
     },
   ]);
   await browser.releaseActions();
+}
+
+async function clickResolvedElement(
+  resolve: () => Promise<ChainablePromiseElement>,
+  label: string
+): Promise<ChainablePromiseElement> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const el = await resolve();
+    try {
+      await clickAtElement(el);
+      return el;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/stale|wasn't found|getElementRect/i.test(message) || attempt === 2) {
+        throw error;
+      }
+      console.log('[E2E][elements] retrying click after stale element', { label, attempt, message });
+      await browser.pause(250);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Failed to click ${label}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -272,9 +297,7 @@ export async function clickText(
   text: string,
   timeout: number = 15_000
 ): Promise<ChainablePromiseElement> {
-  const el = await waitForText(text, timeout);
-  await clickAtElement(el);
-  return el;
+  return await clickResolvedElement(() => waitForText(text, timeout), text);
 }
 
 /**
@@ -284,9 +307,7 @@ export async function clickButton(
   text: string,
   timeout: number = 15_000
 ): Promise<ChainablePromiseElement> {
-  const el = await waitForButton(text, timeout);
-  await clickAtElement(el);
-  return el;
+  return await clickResolvedElement(() => waitForButton(text, timeout), text);
 }
 
 /**
@@ -299,8 +320,7 @@ export async function clickButton(
  * - tauri-driver: CSS button selector + standard click
  */
 export async function clickNativeButton(text: string, timeout: number = 15_000): Promise<void> {
-  const el = await waitForButton(text, timeout);
-  await clickAtElement(el);
+  await clickResolvedElement(() => waitForButton(text, timeout), text);
 }
 
 /**
