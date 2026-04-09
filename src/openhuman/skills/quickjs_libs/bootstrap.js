@@ -131,15 +131,16 @@ globalThis.AbortSignal = AbortSignal;
 // ============================================================================
 // Fetch API
 // ============================================================================
-globalThis.fetch = async function (url, options = {}) {
-  const method = options.method || 'GET';
-  const headers = options.headers || {};
-  const body = options.body || null;
+globalThis.fetch = function (url, options) {
+  options = options || {};
+  var method = options.method || 'GET';
+  var headers = options.headers || {};
+  var body = options.body || null;
 
   // Convert Headers object to plain object if needed
-  let headersObj = {};
+  var headersObj = {};
   if (headers instanceof Headers) {
-    headers.forEach((value, key) => {
+    headers.forEach(function (value, key) {
       headersObj[key] = value;
     });
   } else {
@@ -147,17 +148,17 @@ globalThis.fetch = async function (url, options = {}) {
   }
 
   // __ops.fetch expects a JSON string for options (not a JS object)
-  const resultJson = await __ops.fetch(
+  var resultJson = __ops.fetch(
     url.toString(),
     JSON.stringify({
-      method,
+      method: method,
       headers: headersObj,
       body: typeof body === 'string' ? body : body ? JSON.stringify(body) : null,
     })
   );
 
   // __ops.fetch returns a JSON string — parse it to access status/headers/body
-  const parsed = JSON.parse(resultJson);
+  var parsed = JSON.parse(resultJson);
 
   return new Response(parsed.body, {
     status: parsed.status,
@@ -176,21 +177,20 @@ class Response {
     this.ok = this.status >= 200 && this.status < 300;
   }
 
-  async text() {
+  text() {
     return this._body;
   }
 
-  async json() {
+  json() {
     return JSON.parse(this._body);
   }
 
-  async arrayBuffer() {
-    // Convert string to ArrayBuffer
-    const encoder = new TextEncoder();
+  arrayBuffer() {
+    var encoder = new TextEncoder();
     return encoder.encode(this._body).buffer;
   }
 
-  async blob() {
+  blob() {
     throw new Error('Blob not supported');
   }
 }
@@ -699,6 +699,22 @@ globalThis.__platform = {
   },
 };
 
+/**
+ * Base URL for OAuth proxy and webhook API calls.
+ * Uses BACKEND_URL, then VITE_BACKEND_URL, then production default.
+ * Trailing slashes are stripped.
+ */
+globalThis.__resolveBackendBaseUrl = () => {
+  let raw = (__platform.env('BACKEND_URL') || __platform.env('VITE_BACKEND_URL') || '').trim();
+  if (!raw) {
+    return 'https://api.tinyhumans.ai';
+  }
+  while (raw.length > 0 && raw.charAt(raw.length - 1) === '/') {
+    raw = raw.slice(0, -1);
+  }
+  return raw;
+};
+
 // High-level wrappers for skills (QuickJS bridge)
 globalThis.db = {
   exec: function (sql, params) {
@@ -722,8 +738,8 @@ globalThis.db = {
 };
 
 globalThis.net = {
-  fetch: async function (url, options) {
-    const result = await __ops.fetch(url, options ? JSON.stringify(options) : '{}');
+  fetch: function (url, options) {
+    var result = __ops.fetch(url, options ? JSON.stringify(options) : '{}');
     return JSON.parse(result);
   },
 };
@@ -734,6 +750,13 @@ globalThis.platform = {
   },
   env: function (key) {
     return __platform.env(key);
+  },
+  /**
+   * Desktop-style notification hook. The QuickJS host has no system tray UI here;
+   * avoid logging title/body (may contain PII); shim exists so sync flows do not throw "not a function".
+   */
+  notify: function (_title, _body) {
+    console.log('[platform.notify] notification requested');
   },
 };
 
@@ -839,7 +862,7 @@ globalThis.data = {
      * `X-Encryption-Key` header so the backend can reconstruct the full
      * encryption key and decrypt OAuth tokens server-side.
      */
-    fetch: async function (path, options) {
+    fetch: function (path, options) {
       if (!globalThis.__oauthCredential) {
         return {
           status: 401,
@@ -847,18 +870,18 @@ globalThis.data = {
           body: JSON.stringify({ error: 'No OAuth credential. Complete OAuth setup first.' }),
         };
       }
-      var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-      var jwtToken = __ops.get_session_token() || '';
-      var cleanPath = path.charAt(0) === '/' ? path.slice(1) : path;
-      var credentialId = globalThis.__oauthCredential.credentialId;
-      var clientKey = globalThis.__oauthClientKey || null;
+      const backendUrl = globalThis.__resolveBackendBaseUrl();
+      const jwtToken = __ops.get_session_token() || '';
+      const cleanPath = path.charAt(0) === '/' ? path.slice(1) : path;
+      const credentialId = globalThis.__oauthCredential.credentialId;
+      const clientKey = globalThis.__oauthClientKey || null;
 
       // Use encrypted proxy when client key share is available
-      var proxyUrl;
+      let proxyUrl;
       if (clientKey) {
-        proxyUrl = backendUrl + '/proxy/encrypted/' + credentialId + '/' + cleanPath;
+        proxyUrl = `${backendUrl}/proxy/encrypted/${credentialId}/${cleanPath}`;
       } else {
-        proxyUrl = backendUrl + '/proxy/by-id/' + credentialId + '/' + cleanPath;
+        proxyUrl = `${backendUrl}/proxy/by-id/${credentialId}/${cleanPath}`;
       }
 
       var method = (options && options.method) || 'GET';
@@ -881,8 +904,8 @@ globalThis.data = {
         timeout: options ? options.timeout : undefined,
       };
 
-      console.log('[oauth.fetch] ' + method + ' ' + proxyUrl + ' (credentialId=' + credentialId + ', encrypted=' + !!clientKey + ')');
-      var result = await net.fetch(proxyUrl, fetchOpts);
+      console.log('[oauth.fetch] ' + method + ' ' + proxyUrl + ' (credentialId=' + credentialId + ', encrypted=' + !!clientKey + ', Notion-Version=' + (headers['Notion-Version'] || 'none') + ')');
+      var result = net.fetch(proxyUrl, fetchOpts);
       console.log('[oauth.fetch] response status=' + result.status + ' body_len=' + (result.body ? result.body.length : 0));
 
       // Auto-clear invalid/expired credentials so the user is prompted to re-auth
@@ -903,19 +926,16 @@ globalThis.data = {
     },
 
     /** Revoke the current OAuth credential server-side. */
-    revoke: async function () {
+    revoke: function () {
       if (__oauthCredential) {
         try {
-          var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-          var jwtToken = __ops.get_session_token() || '';
-          var revokeOpts = JSON.stringify({
+          const backendUrl = globalThis.__resolveBackendBaseUrl();
+          const jwtToken = __ops.get_session_token() || '';
+          const revokeOpts = {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jwtToken },
-          });
-          await net.fetch(
-            backendUrl + '/auth/integrations/' + __oauthCredential.credentialId,
-            revokeOpts
-          );
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
+          };
+          net.fetch(`${backendUrl}/auth/integrations/${__oauthCredential.credentialId}`, revokeOpts);
         } catch (e) {
           /* best effort */
         }
@@ -968,7 +988,7 @@ globalThis.data = {
      * For managed: delegates to oauth.fetch.
      * For text: no auto-injection (skill should handle manually).
      */
-    fetch: async function (url, options) {
+    fetch: function (url, options) {
       if (!globalThis.__authCredential) {
         return {
           status: 401,
@@ -1024,7 +1044,7 @@ globalThis.data = {
       };
 
       console.log('[auth.fetch] ' + fetchOpts.method + ' ' + url + ' (mode=' + mode + ')');
-      var result = await net.fetch(url, fetchOpts);
+      var result = net.fetch(url, fetchOpts);
       console.log('[auth.fetch] response status=' + result.status);
 
       // Auto-clear on 401/403 so user is prompted to re-auth
@@ -1091,67 +1111,7 @@ globalThis.skills = {
   },
 };
 
-// ============================================================================
-// Model Bridge API (routes to cloud backend)
-// ============================================================================
-
-globalThis.model = {
-  /**
-   * Generate text from a prompt via the backend API.
-   * @param {string} prompt - Input prompt
-   * @param {object} [options] - Generation options
-   * @param {number} [options.maxTokens=2048] - Max output tokens
-   * @param {number} [options.temperature=0.7] - Sampling temperature
-   * @returns {string}
-   */
-  generate: async function (prompt, options) {
-    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-    var jwtToken = __ops.get_session_token() || '';
-    var body = { prompt: prompt };
-    if (options && options.maxTokens) body.maxTokens = options.maxTokens;
-    if (options && options.temperature) body.temperature = options.temperature;
-    var result = await net.fetch(backendUrl + '/api/ai/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jwtToken },
-      body: JSON.stringify(body),
-      timeout: 30000,
-    });
-    var parsed = JSON.parse(result);
-    if (parsed.status >= 400) {
-      throw new Error('Backend returned ' + parsed.status + ': ' + parsed.body);
-    }
-    var data = JSON.parse(parsed.body);
-    return data.text || '';
-  },
-
-  /**
-   * Summarize text via the backend API.
-   * @param {string} text - Text to summarize
-   * @param {object} [options] - Options
-   * @param {number} [options.maxTokens=500] - Target summary length
-   * @returns {string}
-   */
-  summarize: async function (text, options) {
-    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-    var jwtToken = __ops.get_session_token() || '';
-    var body = { text: text };
-    if (options && options.maxTokens) body.maxTokens = options.maxTokens;
-    var result = await net.fetch(backendUrl + '/api/ai/summarize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jwtToken },
-      body: JSON.stringify(body),
-      timeout: 30000,
-    });
-    var parsed = JSON.parse(result);
-    if (parsed.status >= 400) {
-      throw new Error('Backend returned ' + parsed.status + ': ' + parsed.body);
-    }
-    var data = JSON.parse(parsed.body);
-    return data.summary || '';
-  },
-};
-
-console.log('[bootstrap] Model API initialized');
+// Model API — removed (inference handled at the Rust/agent layer, not in skills)
 
 // ============================================================================
 // Webhook / Tunnel API (skill-scoped)
@@ -1202,10 +1162,10 @@ globalThis.webhook = {
    * @returns {Promise<{id: string, uuid: string, webhookUrl: string}>}
    */
   createTunnel: async function (name, description) {
-    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-    var jwtToken = __ops.get_session_token() || '';
+    const backendUrl = globalThis.__resolveBackendBaseUrl();
+    const jwtToken = __ops.get_session_token() || '';
 
-    var result = await net.fetch(backendUrl + '/webhooks/core', {
+    var result = await net.fetch(`${backendUrl}/webhooks/core`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1264,10 +1224,10 @@ globalThis.webhook = {
     }
 
     // Delete from backend first
-    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-    var jwtToken = __ops.get_session_token() || '';
+    const backendUrl = globalThis.__resolveBackendBaseUrl();
+    const jwtToken = __ops.get_session_token() || '';
 
-    var result = await net.fetch(backendUrl + '/webhooks/core/' + registration.backend_tunnel_id, {
+    var result = await net.fetch(`${backendUrl}/webhooks/core/${registration.backend_tunnel_id}`, {
       method: 'DELETE',
       headers: { Authorization: 'Bearer ' + jwtToken },
       timeout: 10000,

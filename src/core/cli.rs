@@ -61,9 +61,30 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         }
         "voice" | "dictate" => run_voice_server_command(&args[1..]),
         "text-input" => crate::core::text_input_cli::run_text_input_command(&args[1..]),
+        "tree-summarizer" => {
+            crate::core::tree_summarizer_cli::run_tree_summarizer_command(&args[1..])
+        }
         "memory" => crate::core::memory_cli::run_memory_command(&args[1..]),
         namespace => run_namespace_command(namespace, &args[1..], &grouped),
     }
+}
+
+/// Loads key/value pairs from a dotenv file into the process environment.
+///
+/// Precedence: variables already set in the environment are **not** overwritten.
+/// Order: `OPENHUMAN_DOTENV_PATH` (if set to a non-empty path), else `.env` in the current working directory.
+fn load_dotenv_for_server() -> Result<()> {
+    match std::env::var("OPENHUMAN_DOTENV_PATH") {
+        Ok(path) if !path.trim().is_empty() => {
+            dotenvy::from_path(&path).map_err(|e| {
+                anyhow::anyhow!("failed to load dotenv from OPENHUMAN_DOTENV_PATH={path}: {e}")
+            })?;
+        }
+        _ => {
+            let _ = dotenvy::dotenv();
+        }
+    }
+    Ok(())
 }
 
 /// Handles the `run` subcommand to start the core HTTP/JSON-RPC server.
@@ -74,6 +95,8 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
 ///
 /// * `args` - Command-line arguments for the `run` command.
 fn run_server_command(args: &[String]) -> Result<()> {
+    load_dotenv_for_server()?;
+
     let mut port: Option<u16> = None;
     let mut host: Option<String> = None;
     let mut socketio_enabled = true;
@@ -479,6 +502,7 @@ fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("  openhuman call --method <name> [--params '<json>']");
     println!("  openhuman skills <subcommand> [options]   (skill development runtime)");
     println!("  openhuman voice [--hotkey <combo>] [--mode <tap|push>]  (voice dictation server)");
+    println!("  openhuman tree-summarizer <subcommand> [options]  (summary tree CLI)");
     println!("  openhuman <namespace> <function> [--param value ...]\n");
     println!("Available namespaces:");
     for namespace in grouped.keys() {

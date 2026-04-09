@@ -59,6 +59,20 @@ pub enum DomainEvent {
         elapsed_ms: u64,
         success: bool,
     },
+    /// A reaction event was received from a channel transport.
+    ChannelReactionReceived {
+        channel: String,
+        sender: String,
+        target_message_id: String,
+        emoji: String,
+    },
+    /// A reaction update was sent to a channel transport.
+    ChannelReactionSent {
+        channel: String,
+        target_message_id: String,
+        emoji: String,
+        success: bool,
+    },
     /// A channel connected successfully.
     ChannelConnected { channel: String },
     /// A channel disconnected.
@@ -142,6 +156,23 @@ pub enum DomainEvent {
         error: Option<String>,
     },
 
+    // ── Tree Summarizer ──────────────────────────────────────────────────
+    /// An hour leaf was created from buffered data.
+    TreeSummarizerHourCompleted {
+        namespace: String,
+        node_id: String,
+        token_count: u32,
+    },
+    /// A tree node summary was updated during propagation.
+    TreeSummarizerPropagated {
+        namespace: String,
+        node_id: String,
+        level: String,
+        token_count: u32,
+    },
+    /// A full tree rebuild completed.
+    TreeSummarizerRebuildCompleted { namespace: String, total_nodes: u64 },
+
     // ── System lifecycle ────────────────────────────────────────────────
     /// A system component started up.
     SystemStartup { component: String },
@@ -164,6 +195,8 @@ impl DomainEvent {
             Self::ChannelInboundMessage { .. }
             | Self::ChannelMessageReceived { .. }
             | Self::ChannelMessageProcessed { .. }
+            | Self::ChannelReactionReceived { .. }
+            | Self::ChannelReactionSent { .. }
             | Self::ChannelConnected { .. }
             | Self::ChannelDisconnected { .. } => "channel",
 
@@ -183,6 +216,10 @@ impl DomainEvent {
             | Self::WebhookRegistered { .. }
             | Self::WebhookUnregistered { .. }
             | Self::WebhookProcessed { .. } => "webhook",
+
+            Self::TreeSummarizerHourCompleted { .. }
+            | Self::TreeSummarizerPropagated { .. }
+            | Self::TreeSummarizerRebuildCompleted { .. } => "tree_summarizer",
 
             Self::SystemStartup { .. }
             | Self::SystemShutdown { .. }
@@ -264,6 +301,24 @@ mod tests {
                     content: "hi".into(),
                     response: "hello".into(),
                     elapsed_ms: 0,
+                    success: true,
+                },
+                "channel",
+            ),
+            (
+                DomainEvent::ChannelReactionReceived {
+                    channel: "c".into(),
+                    sender: "s".into(),
+                    target_message_id: "m1".into(),
+                    emoji: "👍".into(),
+                },
+                "channel",
+            ),
+            (
+                DomainEvent::ChannelReactionSent {
+                    channel: "c".into(),
+                    target_message_id: "m1".into(),
+                    emoji: "✅".into(),
                     success: true,
                 },
                 "channel",
@@ -409,6 +464,31 @@ mod tests {
                     error: None,
                 },
                 "webhook",
+            ),
+            // Tree Summarizer
+            (
+                DomainEvent::TreeSummarizerHourCompleted {
+                    namespace: "n".into(),
+                    node_id: "2024/03/15/14".into(),
+                    token_count: 500,
+                },
+                "tree_summarizer",
+            ),
+            (
+                DomainEvent::TreeSummarizerPropagated {
+                    namespace: "n".into(),
+                    node_id: "2024/03/15".into(),
+                    level: "day".into(),
+                    token_count: 1000,
+                },
+                "tree_summarizer",
+            ),
+            (
+                DomainEvent::TreeSummarizerRebuildCompleted {
+                    namespace: "n".into(),
+                    total_nodes: 10,
+                },
+                "tree_summarizer",
             ),
             // System
             (
