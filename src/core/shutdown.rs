@@ -93,3 +93,46 @@ async fn wait_for_signal() {
         log::info!("[core] received SIGINT (Ctrl-C)");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn register_does_not_panic() {
+        register(|| async {});
+    }
+
+    #[tokio::test]
+    async fn run_hooks_executes_registered_hooks() {
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+        register(move || {
+            let flag = called_clone.clone();
+            async move {
+                flag.store(true, Ordering::SeqCst);
+            }
+        });
+        run_hooks().await;
+        assert!(called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn run_hooks_drains_hooks_so_second_call_is_noop() {
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+        register(move || {
+            let c = counter_clone.clone();
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        run_hooks().await;
+        let first_count = counter.load(Ordering::SeqCst);
+        run_hooks().await;
+        // Second call should not re-run hooks (they were drained)
+        assert_eq!(counter.load(Ordering::SeqCst), first_count);
+    }
+}
