@@ -180,3 +180,135 @@ pub async fn ai_decrypt(password: String, encrypted: String) -> Result<String, S
     let key = EncryptionKey::derive(&password, &key_file.salt)?;
     key.decrypt_string(&encrypted)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_salt_has_correct_length() {
+        let salt = EncryptionKey::generate_salt();
+        assert_eq!(salt.len(), SALT_LENGTH);
+    }
+
+    #[test]
+    fn generate_salt_is_random() {
+        let s1 = EncryptionKey::generate_salt();
+        let s2 = EncryptionKey::generate_salt();
+        assert_ne!(s1, s2);
+    }
+
+    #[test]
+    fn derive_key_succeeds_with_valid_password() {
+        let salt = EncryptionKey::generate_salt();
+        let key = EncryptionKey::derive("test-password", &salt);
+        assert!(key.is_ok());
+    }
+
+    #[test]
+    fn encrypt_decrypt_roundtrip_bytes() {
+        let salt = EncryptionKey::generate_salt();
+        let key = EncryptionKey::derive("my-secret-password", &salt).unwrap();
+
+        let plaintext = b"Hello, World! This is a secret message.";
+        let payload = key.encrypt(plaintext).unwrap();
+
+        assert!(!payload.ciphertext.is_empty());
+        assert_eq!(payload.nonce.len(), NONCE_LENGTH);
+
+        let decrypted = key.decrypt(&payload).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn encrypt_decrypt_roundtrip_string() {
+        let salt = EncryptionKey::generate_salt();
+        let key = EncryptionKey::derive("password123", &salt).unwrap();
+
+        let original = "sensitive API key: sk-1234567890";
+        let encrypted = key.encrypt_string(original).unwrap();
+
+        assert!(!encrypted.is_empty());
+        assert_ne!(encrypted, original);
+
+        let decrypted = key.decrypt_string(&encrypted).unwrap();
+        assert_eq!(decrypted, original);
+    }
+
+    #[test]
+    fn decrypt_with_wrong_key_fails() {
+        let salt = EncryptionKey::generate_salt();
+        let key1 = EncryptionKey::derive("correct-password", &salt).unwrap();
+        let key2 = EncryptionKey::derive("wrong-password", &salt).unwrap();
+
+        let payload = key1.encrypt(b"secret data").unwrap();
+        let result = key2.decrypt(&payload);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn different_salts_produce_different_keys() {
+        let salt1 = EncryptionKey::generate_salt();
+        let salt2 = EncryptionKey::generate_salt();
+        let key1 = EncryptionKey::derive("same-password", &salt1).unwrap();
+        let key2 = EncryptionKey::derive("same-password", &salt2).unwrap();
+
+        let payload = key1.encrypt(b"test").unwrap();
+        // key2 has different salt, so it can't decrypt key1's payload
+        assert!(key2.decrypt(&payload).is_err());
+    }
+
+    #[test]
+    fn each_encryption_produces_different_ciphertext() {
+        let salt = EncryptionKey::generate_salt();
+        let key = EncryptionKey::derive("password", &salt).unwrap();
+
+        let payload1 = key.encrypt(b"same plaintext").unwrap();
+        let payload2 = key.encrypt(b"same plaintext").unwrap();
+
+        // Different nonces → different ciphertext
+        assert_ne!(payload1.ciphertext, payload2.ciphertext);
+        assert_ne!(payload1.nonce, payload2.nonce);
+    }
+
+    #[test]
+    fn encrypted_payload_serde_roundtrip() {
+        let salt = EncryptionKey::generate_salt();
+        let key = EncryptionKey::derive("pw", &salt).unwrap();
+        let payload = key.encrypt(b"data").unwrap();
+
+        let json = serde_json::to_string(&payload).unwrap();
+        let back: EncryptedPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ciphertext, payload.ciphertext);
+        assert_eq!(back.nonce, payload.nonce);
+    }
+
+    #[test]
+    fn decrypt_string_rejects_invalid_json() {
+        let salt = EncryptionKey::generate_salt();
+        let key = EncryptionKey::derive("pw", &salt).unwrap();
+        let result = key.decrypt_string("not-json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn encrypt_empty_string() {
+        let salt = EncryptionKey::generate_salt();
+        let key = EncryptionKey::derive("pw", &salt).unwrap();
+        let encrypted = key.encrypt_string("").unwrap();
+        let decrypted = key.decrypt_string(&encrypted).unwrap();
+        assert_eq!(decrypted, "");
+    }
+
+    #[test]
+    fn key_file_serde_roundtrip() {
+        let kf = KeyFile {
+            salt: vec![1, 2, 3, 4],
+            version: 1,
+        };
+        let json = serde_json::to_string(&kf).unwrap();
+        let back: KeyFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.salt, vec![1, 2, 3, 4]);
+        assert_eq!(back.version, 1);
+    }
+}

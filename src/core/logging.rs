@@ -217,3 +217,54 @@ pub fn init_for_cli_run(verbose: bool, default_scope: CliLogDefault) {
         let _ = tracing_log::LogTracer::init();
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn level_tag_maps_all_levels() {
+        assert_eq!(level_tag(&Level::ERROR), "ERR");
+        assert_eq!(level_tag(&Level::WARN), "WRN");
+        assert_eq!(level_tag(&Level::INFO), "INF");
+        assert_eq!(level_tag(&Level::DEBUG), "DBG");
+        assert_eq!(level_tag(&Level::TRACE), "TRC");
+    }
+
+    #[test]
+    fn short_target_strips_crate_prefix() {
+        assert_eq!(short_target("openhuman_core::rpc"), "rpc");
+        assert_eq!(short_target("openhuman_core::openhuman::memory"), "memory");
+    }
+
+    #[test]
+    fn short_target_passes_through_simple_names() {
+        assert_eq!(short_target("mymodule"), "mymodule");
+        assert_eq!(short_target(""), "");
+    }
+
+    #[test]
+    fn parse_log_file_constraints_empty_when_unset() {
+        // Remove the env var if it exists
+        let prev = std::env::var("OPENHUMAN_LOG_FILE_CONSTRAINTS").ok();
+        std::env::remove_var("OPENHUMAN_LOG_FILE_CONSTRAINTS");
+        let constraints = parse_log_file_constraints();
+        assert!(constraints.is_empty());
+        if let Some(v) = prev {
+            std::env::set_var("OPENHUMAN_LOG_FILE_CONSTRAINTS", v);
+        }
+    }
+
+    #[test]
+    fn cli_log_default_debug_impl() {
+        // Just verify Debug doesn't panic
+        let _ = format!("{:?}", CliLogDefault::Global);
+        let _ = format!("{:?}", CliLogDefault::AutocompleteOnly);
+    }
+
+    #[test]
+    fn cli_log_default_eq() {
+        assert_eq!(CliLogDefault::Global, CliLogDefault::Global);
+        assert_ne!(CliLogDefault::Global, CliLogDefault::AutocompleteOnly);
+    }
+}
