@@ -406,4 +406,77 @@ mod tests {
         assert_eq!(s1.kv_key(), s2.kv_key());
         assert_eq!(s1.kv_key(), "gmail:conn_x");
     }
+
+    #[test]
+    fn sync_state_budget_exhausted_delegates() {
+        let mut state = SyncState::new("test", "conn");
+        assert!(!state.budget_exhausted());
+        state
+            .daily_budget
+            .record_requests(DEFAULT_DAILY_REQUEST_LIMIT);
+        assert!(state.budget_exhausted());
+    }
+
+    #[test]
+    fn sync_state_budget_remaining_delegates() {
+        let state = SyncState::new("test", "conn");
+        assert_eq!(state.budget_remaining(), DEFAULT_DAILY_REQUEST_LIMIT);
+    }
+
+    #[test]
+    fn sync_state_record_requests_delegates() {
+        let mut state = SyncState::new("test", "conn");
+        state.record_requests(5);
+        assert_eq!(state.budget_remaining(), DEFAULT_DAILY_REQUEST_LIMIT - 5);
+    }
+
+    #[test]
+    fn extract_item_id_skips_empty_strings() {
+        let item = serde_json::json!({"id": "  ", "fallback": "ok"});
+        assert_eq!(
+            extract_item_id(&item, &["id", "fallback"]),
+            Some("ok".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_item_id_deeply_nested() {
+        let item = serde_json::json!({"a": {"b": {"c": "deep"}}});
+        assert_eq!(extract_item_id(&item, &["a.b.c"]), Some("deep".to_string()));
+    }
+
+    #[test]
+    fn extract_item_id_returns_none_for_non_string_leaf() {
+        let item = serde_json::json!({"id": 42});
+        assert_eq!(extract_item_id(&item, &["id"]), None);
+    }
+
+    #[test]
+    fn extract_item_id_trims_whitespace() {
+        let item = serde_json::json!({"id": "  trimmed  "});
+        assert_eq!(extract_item_id(&item, &["id"]), Some("trimmed".to_string()));
+    }
+
+    #[test]
+    fn daily_budget_record_request_increments_by_one() {
+        let mut b = DailyBudget::default();
+        b.record_request();
+        assert_eq!(b.requests_used, 1);
+        b.record_request();
+        assert_eq!(b.requests_used, 2);
+    }
+
+    #[test]
+    fn default_daily_request_limit_is_500() {
+        assert_eq!(DEFAULT_DAILY_REQUEST_LIMIT, 500);
+    }
+
+    #[test]
+    fn today_str_format() {
+        let today = today_str();
+        // Should be YYYY-MM-DD
+        assert_eq!(today.len(), 10);
+        assert_eq!(today.chars().nth(4), Some('-'));
+        assert_eq!(today.chars().nth(7), Some('-'));
+    }
 }
