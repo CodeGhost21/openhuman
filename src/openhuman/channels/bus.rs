@@ -876,6 +876,73 @@ async fn send_channel_reply(channel: &str, text: &str) {
     }
 }
 
+// ── Composio connections-changed subscriber ────────────────────────────
+
+/// Drops every cached per-thread chat Agent whenever the set of
+/// connected Composio integrations changes.
+///
+/// # Why this exists
+///
+/// The web channel keeps an `Agent` per `(client_id, thread_id)` in
+/// [`crate::openhuman::channels::providers::web`]'s `THREAD_SESSIONS`
+/// map. That Agent's system prompt is built *once* at session start
+/// (see `src/openhuman/agent/harness/session/turn.rs`) and deliberately
+/// reused across turns so the inference backend can reuse its tokenised
+/// KV-cache prefix. The rendered prompt bakes in the connected-toolkits
+/// list from [`crate::openhuman::composio::fetch_connected_integrations`].
+///
+/// On Windows the OAuth flow is slow enough (SmartScreen, slower browser
+/// launch, extra consent dialogs) that a common user path is:
+///   1. Send first chat message → Agent built with zero integrations.
+///   2. Start Gmail OAuth, finish it a minute later.
+///   3. Resume chatting in the same thread → the cached Agent still has
+///      the pre-connect prompt; `fetch_connected_integrations` never
+///      runs again for this session.
+///
+/// The process-wide integrations cache was made eventually consistent
+/// in #749, but that only helps *new* sessions. This subscriber closes
+/// the loop: on any change to the connected set, we invalidate the
+/// per-thread Agent cache so the next turn builds fresh. Conversation
+/// context is preserved — the new Agent resumes from the on-disk
+/// transcript before rendering its prompt.
+pub struct WebSessionIntegrationInvalidator;
+
+impl Default for WebSessionIntegrationInvalidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WebSessionIntegrationInvalidator {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl EventHandler for WebSessionIntegrationInvalidator {
+    fn name(&self) -> &str {
+        "channel::web_session_integration_invalidator"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["composio"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        let DomainEvent::ComposioConnectionsChanged { reason } = event else {
+            return;
+        };
+
+        tracing::info!(
+            reason = %reason,
+            "[channel][composio-invalidator] dropping per-thread Agent caches"
+        );
+
+        crate::openhuman::channels::providers::web::invalidate_all_thread_sessions(reason).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -893,6 +960,35 @@ mod tests {
         ChannelInboundSubscriber::default()
             .handle(&DomainEvent::SystemStartup {
                 component: "test".into(),
+            })
+            .await;
+    }
+
+    #[test]
+    fn web_session_invalidator_metadata_is_stable() {
+        let sub = WebSessionIntegrationInvalidator::new();
+        assert_eq!(sub.name(), "channel::web_session_integration_invalidator");
+        assert_eq!(sub.domains(), Some(&["composio"][..]));
+    }
+
+    #[tokio::test]
+    async fn web_session_invalidator_ignores_unrelated_events() {
+        // Non-matching domain — should be a no-op (no panic, no invalidation).
+        WebSessionIntegrationInvalidator::default()
+            .handle(&DomainEvent::SystemStartup {
+                component: "test".into(),
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn web_session_invalidator_handles_matching_event() {
+        // Exercises the handle() path end-to-end. The real invalidation
+        // call is idempotent when the session map is empty, which is
+        // the state in unit tests.
+        WebSessionIntegrationInvalidator::default()
+            .handle(&DomainEvent::ComposioConnectionsChanged {
+                reason: "connection_activated".into(),
             })
             .await;
     }

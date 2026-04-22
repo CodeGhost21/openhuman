@@ -809,6 +809,20 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
             log::warn!("[event_bus] failed to register channel subscriber — bus not initialized");
         }
 
+        // Drops the per-thread Agent cache whenever the connected
+        // Composio integration set changes. See
+        // `WebSessionIntegrationInvalidator` for the Windows-specific
+        // race this closes.
+        if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
+            crate::openhuman::channels::bus::WebSessionIntegrationInvalidator::new(),
+        )) {
+            std::mem::forget(handle);
+        } else {
+            log::warn!(
+                "[event_bus] failed to register web session integration invalidator — bus not initialized"
+            );
+        }
+
         crate::openhuman::health::bus::register_health_subscriber();
         crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),

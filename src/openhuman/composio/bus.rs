@@ -371,6 +371,19 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                     // the connection is confirmed ACTIVE, so the next
                     // agent session picks up the newly connected toolkit.
                     super::ops::invalidate_connected_integrations_cache();
+                    // Notify downstream caches that embed the
+                    // integration set into frozen artefacts — most
+                    // importantly the web channel's per-thread Agent,
+                    // whose system prompt bakes in the connected
+                    // toolkits at session start. Without this, a user
+                    // who starts a chat *before* finishing OAuth stays
+                    // pinned to the pre-connect snapshot even after
+                    // the integrations cache is correctly busted.
+                    crate::core::event_bus::publish_global(
+                        crate::core::event_bus::DomainEvent::ComposioConnectionsChanged {
+                            reason: "connection_activated".into(),
+                        },
+                    );
                 }
                 Err(WaitError::Timeout { last_status }) => {
                     tracing::warn!(

@@ -3,6 +3,7 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
@@ -44,6 +45,13 @@ struct SessionEntry {
     /// instead of invoking `build_session_agent` to re-resolve the
     /// target.
     target_agent_id: String,
+    /// Snapshot of `THREAD_SESSIONS_GENERATION` at the time this
+    /// entry's `agent` was built. The reinsertion step at the end of
+    /// `run_chat_task` compares it to the current generation — if an
+    /// external invalidation (e.g. Composio connection change) bumped
+    /// the counter while the turn was running, the stale entry is
+    /// dropped instead of resurrecting it.
+    generation: u64,
 }
 
 /// Decide which agent definition this turn should run with.
@@ -73,6 +81,59 @@ struct InFlightEntry {
 
 static THREAD_SESSIONS: Lazy<Mutex<HashMap<String, SessionEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Monotonic generation counter for THREAD_SESSIONS.
+///
+/// Bumped by [`invalidate_all_thread_sessions`] whenever an external
+/// signal (e.g. a Composio connection reached `ACTIVE`) makes the
+/// baked-in state of every cached Agent potentially stale. Every
+/// freshly built Agent records the generation it was born under; on
+/// reinsertion the turn loop checks that generation against the
+/// current counter and discards the entry if it no longer matches —
+/// closing the race where an in-flight turn's agent (already removed
+/// from the map at turn start) would otherwise be re-cached with the
+/// pre-invalidation system prompt.
+static THREAD_SESSIONS_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Read the current session-cache generation. Freshly built agents
+/// stamp this value onto their `SessionEntry` so stale reinsertions
+/// can be detected post-hoc.
+fn current_session_generation() -> u64 {
+    THREAD_SESSIONS_GENERATION.load(Ordering::Acquire)
+}
+
+/// Drop every cached per-thread Agent and bump the generation counter.
+///
+/// Triggered by the channels-domain bus subscriber whenever the
+/// connected-integrations set changes. The next chat turn on each
+/// thread will `build_session_agent` a fresh Agent, which re-runs
+/// `fetch_connected_integrations` and rebuilds the system prompt with
+/// the current toolkit list — while still resuming the conversation
+/// from the on-disk transcript (see `turn::try_load_session_transcript`),
+/// so no context is lost.
+///
+/// Bumping the generation counter is what makes this safe under
+/// concurrent turns: an agent that was mid-turn when we clear the map
+/// will finish and *try* to reinsert itself, but the reinsertion
+/// check in `run_chat_task` compares the entry's stamped generation
+/// against the now-higher counter and drops the stale reinsertion on
+/// the floor.
+pub async fn invalidate_all_thread_sessions(reason: &str) {
+    let previous_generation = THREAD_SESSIONS_GENERATION.fetch_add(1, Ordering::AcqRel);
+    let cleared = {
+        let mut sessions = THREAD_SESSIONS.lock().await;
+        let count = sessions.len();
+        sessions.clear();
+        count
+    };
+    log::info!(
+        "[web-channel] thread-session cache invalidated reason={} cleared={} generation={}->{}",
+        reason,
+        cleared,
+        previous_generation,
+        previous_generation + 1,
+    );
+}
 
 static IN_FLIGHT: Lazy<Mutex<HashMap<String, InFlightEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -347,11 +408,18 @@ async fn run_chat_task(
         sessions.remove(&map_key)
     };
 
-    let mut agent = match prior {
+    // Snapshot the cache generation *before* we build / reuse. A fresh
+    // build must stamp the current generation so the end-of-turn
+    // reinsertion check can detect if an invalidation happened while
+    // the turn was in flight.
+    let current_generation = current_session_generation();
+
+    let (mut agent, built_generation) = match prior {
         Some(entry)
             if entry.model_override == model_override
                 && entry.temperature == temperature
-                && entry.target_agent_id == target_agent_id =>
+                && entry.target_agent_id == target_agent_id
+                && entry.generation == current_generation =>
         {
             log::info!(
                 "[web-channel] reusing cached session agent id={} for client={} thread={}",
@@ -359,31 +427,39 @@ async fn run_chat_task(
                 client_id,
                 thread_id
             );
-            entry.agent
+            (entry.agent, entry.generation)
         }
         Some(prior_entry) => {
             log::info!(
-                "[web-channel] cache miss — rebuilding session agent (was id={}, now id={}) for client={} thread={}",
+                "[web-channel] cache miss — rebuilding session agent (was id={} gen={}, now id={} gen={}) for client={} thread={}",
                 prior_entry.target_agent_id,
+                prior_entry.generation,
                 target_agent_id,
+                current_generation,
                 client_id,
                 thread_id
             );
+            (
+                build_session_agent(
+                    &config,
+                    client_id,
+                    thread_id,
+                    model_override.clone(),
+                    temperature,
+                )?,
+                current_generation,
+            )
+        }
+        None => (
             build_session_agent(
                 &config,
                 client_id,
                 thread_id,
                 model_override.clone(),
                 temperature,
-            )?
-        }
-        None => build_session_agent(
-            &config,
-            client_id,
-            thread_id,
-            model_override.clone(),
-            temperature,
-        )?,
+            )?,
+            current_generation,
+        ),
     };
 
     // Wire up a real-time progress channel so tool calls, iterations,
@@ -419,7 +495,16 @@ async fn run_chat_task(
     // Clear the sender so it doesn't hold the channel open across sessions.
     agent.set_on_progress(None);
 
-    {
+    // Reinsert only if no external signal bumped the cache generation
+    // while this turn was running. When [`invalidate_all_thread_sessions`]
+    // fires mid-turn (e.g. Composio connection reached ACTIVE while the
+    // user was already waiting on a response), `built_generation` is now
+    // behind the live counter and reinserting would resurrect the
+    // pre-invalidation Agent — whose system prompt still bakes in the
+    // stale integration list. Drop it on the floor so the next turn
+    // rebuilds cleanly.
+    let live_generation = current_session_generation();
+    if built_generation == live_generation {
         let mut sessions = THREAD_SESSIONS.lock().await;
         sessions.insert(
             map_key,
@@ -428,7 +513,16 @@ async fn run_chat_task(
                 model_override,
                 temperature,
                 target_agent_id,
+                generation: built_generation,
             },
+        );
+    } else {
+        log::info!(
+            "[web-channel] dropping post-turn session reinsert client={} thread={} built_gen={} live_gen={} (invalidated mid-turn)",
+            client_id,
+            thread_id,
+            built_generation,
+            live_generation,
         );
     }
 
@@ -1045,10 +1139,10 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 mod tests {
     use super::{
         all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
-        event_session_id_for, inference_budget_exceeded_user_message,
-        is_inference_budget_exceeded_error, json_output, key_for, normalize_model_override,
-        optional_f64, optional_string, required_string, schemas, start_chat,
-        subscribe_web_channel_events,
+        current_session_generation, event_session_id_for, inference_budget_exceeded_user_message,
+        invalidate_all_thread_sessions, is_inference_budget_exceeded_error, json_output, key_for,
+        normalize_model_override, optional_f64, optional_string, required_string, schemas,
+        start_chat, subscribe_web_channel_events,
     };
     use crate::core::TypeSchema;
 
@@ -1101,6 +1195,34 @@ mod tests {
         let message = inference_budget_exceeded_user_message();
         assert!(message.contains("top up"));
         assert!(message.contains("credits"));
+    }
+
+    // ── Integration-change invalidation ────────────────────────────
+
+    /// The generation counter must strictly increase on every call to
+    /// `invalidate_all_thread_sessions` so the end-of-turn reinsertion
+    /// check in `run_chat_task` can tell pre- and post-invalidation
+    /// builds apart.
+    ///
+    /// Note: the counter is process-global, so this test only asserts
+    /// monotonic delta rather than absolute value — other tests may
+    /// have bumped it first.
+    #[tokio::test]
+    async fn invalidate_all_thread_sessions_bumps_generation_monotonically() {
+        let before = current_session_generation();
+        invalidate_all_thread_sessions("unit_test_one").await;
+        let after_one = current_session_generation();
+        assert!(
+            after_one > before,
+            "generation did not advance on first invalidation: before={before} after={after_one}"
+        );
+
+        invalidate_all_thread_sessions("unit_test_two").await;
+        let after_two = current_session_generation();
+        assert!(
+            after_two > after_one,
+            "generation did not advance on second invalidation: after_one={after_one} after_two={after_two}"
+        );
     }
 
     // ── Schema catalog ────────────────────────────────────────────

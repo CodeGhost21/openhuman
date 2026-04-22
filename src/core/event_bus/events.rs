@@ -233,6 +233,24 @@ pub enum DomainEvent {
         cost_usd: f64,
         elapsed_ms: u64,
     },
+    /// The set of active Composio connections changed — new connection
+    /// reached `ACTIVE`, a connection was deleted, or the UI-driven
+    /// `list_connections` reconciliation observed a divergence between
+    /// the backend and the in-process cache.
+    ///
+    /// Consumed by caches that embed integration state into frozen
+    /// artefacts (e.g. the per-thread chat Agent, whose system prompt
+    /// bakes in the connected-toolkits list at session start). Those
+    /// caches drop their entries so the next access rebuilds with the
+    /// current integration set — without this event, Windows users who
+    /// finish OAuth *after* their first chat turn stay pinned to the
+    /// pre-connect snapshot for the life of the thread.
+    ComposioConnectionsChanged {
+        /// Short slug describing why the event fired — useful for
+        /// log correlation. One of: `"connection_activated"`,
+        /// `"connection_deleted"`, `"cache_reconciliation"`.
+        reason: String,
+    },
 
     // ── Triage ──────────────────────────────────────────────────────────
     //
@@ -355,7 +373,8 @@ impl DomainEvent {
 
             Self::ComposioTriggerReceived { .. }
             | Self::ComposioConnectionCreated { .. }
-            | Self::ComposioActionExecuted { .. } => "composio",
+            | Self::ComposioActionExecuted { .. }
+            | Self::ComposioConnectionsChanged { .. } => "composio",
 
             Self::TriggerEvaluated { .. }
             | Self::TriggerEscalated { .. }
@@ -680,6 +699,12 @@ mod tests {
                     error: None,
                     cost_usd: 0.0,
                     elapsed_ms: 123,
+                },
+                "composio",
+            ),
+            (
+                DomainEvent::ComposioConnectionsChanged {
+                    reason: "connection_activated".into(),
                 },
                 "composio",
             ),

@@ -135,6 +135,14 @@ pub async fn composio_delete_connection(
         .map_err(|e| format!("[composio] delete_connection failed: {e:#}"))?;
     // Bust the integrations cache so the next prompt reflects the removal.
     invalidate_connected_integrations_cache();
+    // Also drop any per-thread Agent caches that baked the removed
+    // integration into their system prompt — see the identical callsite
+    // in `bus::ComposioConnectionCreatedSubscriber` for the rationale.
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::ComposioConnectionsChanged {
+            reason: "connection_deleted".into(),
+        },
+    );
     Ok(RpcOutcome::new(
         resp,
         vec![format!("composio: connection {connection_id} deleted")],
@@ -572,6 +580,7 @@ fn sync_cache_with_connections(connections: &[super::types::ComposioConnection])
         return;
     }
 
+    let mut invalidated_any = false;
     if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
         for (key, cached_set, live_set) in divergent_keys {
             // Diff logging — makes Windows-timing regressions easy to
@@ -586,7 +595,24 @@ fn sync_cache_with_connections(connections: &[super::types::ComposioConnection])
                 "[composio][integrations] cache diverges from backend — invalidating"
             );
             guard.remove(&key);
+            invalidated_any = true;
         }
+    }
+
+    if invalidated_any {
+        // Propagate the invalidation to downstream caches that bake the
+        // integration set into frozen artefacts (e.g. the web channel's
+        // per-thread Agent). This is the Windows-critical path: if the
+        // primary `ComposioConnectionCreatedSubscriber` times out before
+        // the connection goes ACTIVE, the UI's periodic
+        // `composio_list_connections` polling is the *only* signal that
+        // a toolkit just came online — and without this event, the
+        // thread-level Agent cache keeps serving the stale prompt.
+        crate::core::event_bus::publish_global(
+            crate::core::event_bus::DomainEvent::ComposioConnectionsChanged {
+                reason: "cache_reconciliation".into(),
+            },
+        );
     }
 }
 
