@@ -225,6 +225,11 @@ pub enum DomainEvent {
         connection_id: String,
         connect_url: String,
     },
+    /// A Composio connection was removed.
+    ComposioConnectionDeleted {
+        toolkit: String,
+        connection_id: String,
+    },
     /// A Composio action was executed (success or failure) via the backend.
     ComposioActionExecuted {
         tool: String,
@@ -373,6 +378,7 @@ impl DomainEvent {
 
             Self::ComposioTriggerReceived { .. }
             | Self::ComposioConnectionCreated { .. }
+            | Self::ComposioConnectionDeleted { .. }
             | Self::ComposioActionExecuted { .. }
             | Self::ComposioConnectionsChanged { .. } => "composio",
 
