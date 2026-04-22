@@ -448,6 +448,11 @@ jobs:
       - name: Build frontend
         run: yarn build
         env:
+          # vite + @sentry/vite-plugin push the mac runner past Node's default
+          # 4 GB heap on our ~1.9 MB bundle once source maps are emitted —
+          # raise the ceiling so `vite build` doesn't abort with
+          # `Reached heap limit Allocation failed`.
+          NODE_OPTIONS: --max-old-space-size=8192
           NODE_ENV: production
           VITE_OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
@@ -546,6 +551,10 @@ jobs:
         shell: bash
         working-directory: app
         env:
+          # tauri.conf.json's `beforeBuildCommand` re-runs `vite build` inside
+          # this step, so the same heap bump from `Build frontend` applies
+          # here too — without it the mac runner aborts on the rebuild.
+          NODE_OPTIONS: --max-old-space-size=8192
           BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
           OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VITE_OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
