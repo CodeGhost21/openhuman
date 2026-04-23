@@ -1,38 +1,19 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, type Mock } from 'vitest';
 
+import * as tauriCommands from '../../../utils/tauriCommands';
 import ServiceBlockingGate from '../ServiceBlockingGate';
 
-const mockOpenUrl = vi.fn();
-const mockUseCoreState = vi.fn();
-const mockUseDaemonHealth = vi.fn();
-const mockUseDaemonLifecycle = vi.fn();
-
-vi.mock('../../../utils/openUrl', () => ({
-  openUrl: (...args: unknown[]) => mockOpenUrl(...args),
-}));
-
-vi.mock('../../../utils/config', () => ({
-  LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
-}));
-
-vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: () => mockUseCoreState() }));
-
-vi.mock('../../../hooks/useDaemonHealth', () => ({ useDaemonHealth: () => mockUseDaemonHealth() }));
-
-vi.mock('../../../hooks/useDaemonLifecycle', () => ({
-  useDaemonLifecycle: () => mockUseDaemonLifecycle(),
-}));
-
 describe('ServiceBlockingGate', () => {
-  beforeEach(() => {
-    mockOpenUrl.mockReset();
-    mockUseCoreState.mockReturnValue({ snapshot: { sessionToken: 'token' } });
-    mockUseDaemonHealth.mockReturnValue({ status: 'running', restartDaemon: vi.fn() });
-    mockUseDaemonLifecycle.mockReturnValue({ maxAttemptsReached: false, resetRetries: vi.fn() });
-  });
+  const mockIsTauri = tauriCommands.isTauri as Mock;
+  const mockServiceStatus = tauriCommands.openhumanServiceStatus as Mock;
+  const mockAgentStatus = tauriCommands.openhumanAgentServerStatus as Mock;
+  const mockInstall = tauriCommands.openhumanServiceInstall as Mock;
+  const mockStart = tauriCommands.openhumanServiceStart as Mock;
 
-  it('renders children and does not show recovery prompt when daemon is healthy', async () => {
+  it('renders children directly outside Tauri', async () => {
+    mockIsTauri.mockReturnValue(false);
+
     render(
       <ServiceBlockingGate>
         <div>App Content</div>
@@ -40,12 +21,12 @@ describe('ServiceBlockingGate', () => {
     );
 
     await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
-    expect(screen.queryByText('OpenHuman core is unavailable')).not.toBeInTheDocument();
   });
 
-  it('shows recovery prompt when daemon retries are exhausted', async () => {
-    mockUseDaemonHealth.mockReturnValue({ status: 'error', restartDaemon: vi.fn() });
-    mockUseDaemonLifecycle.mockReturnValue({ maxAttemptsReached: true, resetRetries: vi.fn() });
+  it('renders children even when service is not installed', async () => {
+    mockIsTauri.mockReturnValue(true);
+    mockServiceStatus.mockResolvedValue({ result: { state: 'NotInstalled' }, logs: [] });
+    mockAgentStatus.mockResolvedValue({ result: { running: false }, logs: [] });
 
     render(
       <ServiceBlockingGate>
@@ -53,13 +34,16 @@ describe('ServiceBlockingGate', () => {
       </ServiceBlockingGate>
     );
 
-    expect(screen.getByText('OpenHuman core is unavailable')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Download Latest Version' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByText('OpenHuman Service Required')).not.toBeInTheDocument();
   });
 
-  it('opens latest release page from recovery prompt', async () => {
-    mockUseDaemonHealth.mockReturnValue({ status: 'error', restartDaemon: vi.fn() });
-    mockUseDaemonLifecycle.mockReturnValue({ maxAttemptsReached: true, resetRetries: vi.fn() });
+  it('does not expose forced install actions from the app shell', async () => {
+    mockIsTauri.mockReturnValue(true);
+    mockServiceStatus.mockResolvedValue({ result: { state: 'NotInstalled' }, logs: [] });
+    mockAgentStatus.mockResolvedValue({ result: { running: false }, logs: [] });
+    mockInstall.mockResolvedValue({ result: { state: 'Stopped' }, logs: [] });
+    mockStart.mockResolvedValue({ result: { state: 'Running' }, logs: [] });
 
     render(
       <ServiceBlockingGate>
@@ -67,23 +51,16 @@ describe('ServiceBlockingGate', () => {
       </ServiceBlockingGate>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Download Latest Version' }));
-
-    await waitFor(() => {
-      expect(mockOpenUrl).toHaveBeenCalledWith(
-        'https://github.com/tinyhumansai/openhuman/releases/latest'
-      );
-    });
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Install Service' })).not.toBeInTheDocument();
+    expect(mockInstall).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
   });
 
-  it('calls restartDaemon and resetRetries on successful retry', async () => {
-    const mockRestartDaemon = vi.fn().mockResolvedValue(true);
-    const mockResetRetries = vi.fn();
-    mockUseDaemonHealth.mockReturnValue({ status: 'error', restartDaemon: mockRestartDaemon });
-    mockUseDaemonLifecycle.mockReturnValue({
-      maxAttemptsReached: true,
-      resetRetries: mockResetRetries,
-    });
+  it('renders children when service is running even if agent is not running', async () => {
+    mockIsTauri.mockReturnValue(true);
+    mockServiceStatus.mockResolvedValue({ result: { state: 'Running' }, logs: [] });
+    mockAgentStatus.mockResolvedValue({ result: { running: false }, logs: [] });
 
     render(
       <ServiceBlockingGate>
@@ -91,18 +68,14 @@ describe('ServiceBlockingGate', () => {
       </ServiceBlockingGate>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retry Core' }));
-
-    await waitFor(() => {
-      expect(mockRestartDaemon).toHaveBeenCalled();
-      expect(mockResetRetries).toHaveBeenCalled();
-    });
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByText('OpenHuman Service Required')).not.toBeInTheDocument();
   });
 
-  it('shows error message when restartDaemon returns false', async () => {
-    const mockRestartDaemon = vi.fn().mockResolvedValue(false);
-    mockUseDaemonHealth.mockReturnValue({ status: 'error', restartDaemon: mockRestartDaemon });
-    mockUseDaemonLifecycle.mockReturnValue({ maxAttemptsReached: true, resetRetries: vi.fn() });
+  it('renders children when service is running and agent probe fails', async () => {
+    mockIsTauri.mockReturnValue(true);
+    mockServiceStatus.mockResolvedValue({ result: { state: 'Running' }, logs: [] });
+    mockAgentStatus.mockRejectedValue(new Error('agent status unavailable'));
 
     render(
       <ServiceBlockingGate>
@@ -110,17 +83,14 @@ describe('ServiceBlockingGate', () => {
       </ServiceBlockingGate>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retry Core' }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Retry failed/)).toBeInTheDocument();
-    });
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByText('OpenHuman Service Required')).not.toBeInTheDocument();
   });
 
-  it('shows error message when restartDaemon throws', async () => {
-    const mockRestartDaemon = vi.fn().mockRejectedValue(new Error('daemon error'));
-    mockUseDaemonHealth.mockReturnValue({ status: 'error', restartDaemon: mockRestartDaemon });
-    mockUseDaemonLifecycle.mockReturnValue({ maxAttemptsReached: true, resetRetries: vi.fn() });
+  it('renders children when service is stopped but agent server is running (soft pass)', async () => {
+    mockIsTauri.mockReturnValue(true);
+    mockServiceStatus.mockResolvedValue({ result: { state: 'Stopped' }, logs: [] });
+    mockAgentStatus.mockResolvedValue({ result: { running: true }, logs: [] });
 
     render(
       <ServiceBlockingGate>
@@ -128,10 +98,22 @@ describe('ServiceBlockingGate', () => {
       </ServiceBlockingGate>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retry Core' }));
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByText('OpenHuman Service Required')).not.toBeInTheDocument();
+  });
 
-    await waitFor(() => {
-      expect(screen.getByText(/Retry failed/)).toBeInTheDocument();
-    });
+  it('renders children when service probe fails but agent server is running (soft pass)', async () => {
+    mockIsTauri.mockReturnValue(true);
+    mockServiceStatus.mockRejectedValue(new Error('service status unavailable'));
+    mockAgentStatus.mockResolvedValue({ result: { running: true }, logs: [] });
+
+    render(
+      <ServiceBlockingGate>
+        <div>App Content</div>
+      </ServiceBlockingGate>
+    );
+
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByText('OpenHuman Service Required')).not.toBeInTheDocument();
   });
 });

@@ -1,39 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
-use super::types::{
-    Capability, CapabilityCategory, CapabilityPrivacy, CapabilityStatus, PrivacyDataKind,
-};
-
-const LOCAL_RAW: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
-    leaves_device: false,
-    data_kind: PrivacyDataKind::Raw,
-    destinations: &[],
-});
-
-const DERIVED_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
-    leaves_device: true,
-    data_kind: PrivacyDataKind::Derived,
-    destinations: &["OpenHuman backend", "TinyHumans Neocortex"],
-});
-
-const LOCAL_CREDENTIALS: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
-    leaves_device: false,
-    data_kind: PrivacyDataKind::Credentials,
-    destinations: &[],
-});
-
-const DIAGNOSTICS_TO_BACKEND: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
-    leaves_device: true,
-    data_kind: PrivacyDataKind::Diagnostics,
-    destinations: &["OpenHuman backend"],
-});
-
-const MODEL_DOWNLOAD: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
-    leaves_device: true,
-    data_kind: PrivacyDataKind::Metadata,
-    destinations: &["Hugging Face"],
-});
+use super::types::{Capability, CapabilityCategory, CapabilityStatus};
 
 const CAPABILITIES: &[Capability] = &[
     Capability {
@@ -44,7 +12,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Start a new conversation thread with the assistant.",
         how_to: "Conversations",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "conversation.send_text",
@@ -54,7 +21,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Send typed messages to the assistant in a conversation.",
         how_to: "Conversations > Message composer",
         status: CapabilityStatus::Stable,
-        privacy: DERIVED_TO_BACKEND,
     },
     Capability {
         id: "conversation.send_voice",
@@ -64,7 +30,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Record or attach voice input and send it as a message.",
         how_to: "Conversations > Voice input",
         status: CapabilityStatus::Beta,
-        privacy: DERIVED_TO_BACKEND,
     },
     Capability {
         id: "conversation.inline_autocomplete",
@@ -74,7 +39,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Show predictive inline text suggestions while you type.",
         how_to: "Settings > Inline Autocomplete",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "conversation.copy_messages",
@@ -84,7 +48,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Copy individual assistant or user messages for reuse elsewhere.",
         how_to: "Conversations > Message actions",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "conversation.delete_conversations",
@@ -94,7 +57,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Remove existing conversation threads from the app.",
         how_to: "Conversations > Thread actions",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "conversation.suggested_questions",
@@ -104,7 +66,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Offer prompt suggestions to help continue a conversation.",
         how_to: "Home or Conversations > Suggested prompts",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "conversation.tool_execution_timeline",
@@ -114,7 +75,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Show the sequence of tool calls and actions used to answer a request.",
         how_to: "Conversations > Tool timeline",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "intelligence.analyze_actionable_items",
@@ -124,7 +84,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Extract and summarize actionable items from your activity and conversations.",
         how_to: "Intelligence",
         status: CapabilityStatus::Stable,
-        privacy: DERIVED_TO_BACKEND,
     },
     Capability {
         id: "intelligence.filter_actionable_items",
@@ -134,7 +93,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Search and filter actionable items to focus on what matters now.",
         how_to: "Intelligence > Filters and search",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "intelligence.mark_actionable_item_complete",
@@ -144,7 +102,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Mark an actionable item as completed.",
         how_to: "Intelligence > Item actions",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "intelligence.dismiss_actionable_item",
@@ -154,7 +111,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Dismiss irrelevant or already handled actionable items.",
         how_to: "Intelligence > Item actions",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "intelligence.snooze_actionable_item",
@@ -164,7 +120,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Temporarily hide an actionable item until later.",
         how_to: "Intelligence > Item actions",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "intelligence.undo_action",
@@ -174,7 +129,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Undo a recent complete, dismiss, or snooze action.",
         how_to: "Intelligence > Undo snackbar or item history",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "intelligence.memory_workspace",
@@ -184,7 +138,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Inspect or debug the app's memory workspace and stored knowledge.",
         how_to: "Settings > Memory Debug",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "skills.discover",
@@ -194,7 +147,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Browse available skills that can extend the app.",
         how_to: "Skills",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "skills.install",
@@ -204,7 +156,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Install a skill into the local workspace.",
         how_to: "Skills > Install",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "skills.configure",
@@ -214,7 +165,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Open skill setup and update skill-specific configuration.",
         how_to: "Skills > Setup or Settings > Connections",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "skills.connection_status",
@@ -224,7 +174,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "See whether a skill-backed integration is connected, offline, or needs setup.",
         how_to: "Skills or Settings > Connections",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "skills.sync_manual",
@@ -234,7 +183,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Trigger a manual data sync for a skill integration.",
         how_to: "Skills > Skill card > Sync",
         status: CapabilityStatus::Beta,
-        privacy: DERIVED_TO_BACKEND,
     },
     Capability {
         id: "skills.run_apify_actors",
@@ -244,7 +192,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Launch Apify scrapers and automation actors, then inspect run status and collected results.",
         how_to: "Conversations > Ask the assistant to run an Apify actor",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "skills.toggle_enabled",
@@ -254,7 +201,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Turn individual skills on or off without uninstalling them.",
         how_to: "Settings > Developer Options > Skills",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "skills.open_connections_hub",
@@ -264,7 +210,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Browse the dedicated connections hub for external skill-backed integrations.",
         how_to: "Settings > Connections",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "skills.connect_google",
@@ -274,7 +219,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Connect Google services for email, contacts, and calendar workflows.",
         how_to: "Settings > Connections",
         status: CapabilityStatus::ComingSoon,
-        privacy: LOCAL_CREDENTIALS,
     },
     Capability {
         id: "skills.connect_notion",
@@ -284,7 +228,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Connect Notion for workspace sync and productivity workflows.",
         how_to: "Settings > Connections",
         status: CapabilityStatus::ComingSoon,
-        privacy: LOCAL_CREDENTIALS,
     },
     Capability {
         id: "skills.connect_web3_wallet",
@@ -294,7 +237,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Connect a wallet for crypto workflows and onchain actions.",
         how_to: "Settings > Connections",
         status: CapabilityStatus::ComingSoon,
-        privacy: None,
     },
     Capability {
         id: "skills.connect_crypto_exchange",
@@ -304,7 +246,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Connect supported exchanges for trading and portfolio workflows.",
         how_to: "Settings > Connections",
         status: CapabilityStatus::ComingSoon,
-        privacy: None,
     },
     Capability {
         id: "local_ai.download_model",
@@ -314,7 +255,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Download and bootstrap local AI runtimes and model bundles.",
         how_to: "Settings > Local AI Model",
         status: CapabilityStatus::Beta,
-        privacy: MODEL_DOWNLOAD,
     },
     Capability {
         id: "local_ai.manage_model_assets",
@@ -324,7 +264,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Inspect asset status and download specific chat, vision, embedding, STT, or TTS assets.",
         how_to: "Settings > Local AI Model > Advanced > Capability Assets",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "local_ai.embed_text",
@@ -334,7 +273,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Create local vector embeddings for text input.",
         how_to: "Settings > Local AI Model > Advanced > Test Embeddings",
         status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
     },
     Capability {
         id: "local_ai.speech_to_text",
@@ -344,7 +282,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Transcribe audio into text using local speech recognition.",
         how_to: "Settings > Local AI Model > Advanced > Test Voice Input",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "local_ai.text_to_speech",
@@ -354,7 +291,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Synthesize speech from text using local voice models.",
         how_to: "Settings > Local AI Model > Advanced > Test Voice Output",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "local_ai.vision_processing",
@@ -364,7 +300,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Run vision prompts against images using a local multimodal model.",
         how_to: "Settings > Local AI Model > Advanced > Test Vision Prompt",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "local_ai.direct_prompting",
@@ -374,7 +309,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Send a direct prompt to the local model without using the cloud API.",
         how_to: "Settings > Local AI Model > Advanced > Test Custom Prompt",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "team.create",
@@ -384,7 +318,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Create a team and start collaborating with shared billing and members.",
         how_to: "Settings > Team",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "team.join_via_invite_code",
@@ -394,7 +327,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Join an existing team using an invite code.",
         how_to: "Invites > Redeem an Invite Code",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "team.switch_active_team",
@@ -404,7 +336,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Switch which team is currently active in the app.",
         how_to: "Settings > Team",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "team.leave",
@@ -414,7 +345,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Leave a team that you no longer want to participate in.",
         how_to: "Settings > Team",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "team.manage_members",
@@ -424,7 +354,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Review members and change team roles when you have permission.",
         how_to: "Settings > Team > Manage team > Members",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "team.generate_invite_codes",
@@ -434,7 +363,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Create invite codes to bring new members into a team.",
         how_to: "Settings > Team > Manage team > Invites",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "team.track_invite_usage",
@@ -444,7 +372,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "View invite usage counts, limits, and revoke team invites.",
         how_to: "Settings > Team > Manage team > Invites",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "auth.login_oauth",
@@ -454,7 +381,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Sign in with the app's supported provider-based authentication flow.",
         how_to: "Welcome",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "auth.onboarding_setup",
@@ -464,7 +390,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Walk through onboarding to configure initial permissions and preferences.",
         how_to: "Onboarding",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "auth.configure_tool_access",
@@ -474,7 +399,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Choose which built-in tools OpenHuman can use on your behalf during setup.",
         how_to: "Onboarding > Enable Tools",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "auth.backup_recovery_phrase",
@@ -484,7 +408,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Generate and save a recovery phrase used to secure and restore encrypted app data.",
         how_to: "Onboarding > Recovery Phrase",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "auth.import_recovery_phrase",
@@ -494,7 +417,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Import an existing recovery phrase to restore encrypted app data.",
         how_to: "Onboarding > Recovery Phrase > I already have a recovery phrase",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "auth.logout",
@@ -504,7 +426,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Sign out of the current session.",
         how_to: "Settings > Log out",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "screen_intelligence.toggle_monitoring",
@@ -514,7 +435,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Turn desktop screen intelligence capture on or off.",
         how_to: "Settings > Screen Intelligence",
         status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
     },
     Capability {
         id: "screen_intelligence.manage_accessibility_permissions",
@@ -524,7 +444,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Review and grant the accessibility permissions required for desktop assistance.",
         how_to: "Onboarding > Screen permissions or Settings > Accessibility Automation",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "screen_intelligence.review_vision_data",
@@ -534,7 +453,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Inspect the captured screen intelligence and related vision summaries.",
         how_to: "Settings > Screen Intelligence",
         status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
     },
     Capability {
         id: "screen_intelligence.configure_capture_fps",
@@ -544,7 +462,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Tune the screen capture frame rate used by screen intelligence.",
         how_to: "Settings > Screen Intelligence",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "screen_intelligence.app_whitelist",
@@ -554,7 +471,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Allow screen intelligence only for selected applications.",
         how_to: "Settings > Screen Intelligence",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "screen_intelligence.app_blacklist",
@@ -564,7 +480,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Exclude selected applications from screen intelligence capture.",
         how_to: "Settings > Screen Intelligence",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "channels.connect_platform",
@@ -574,7 +489,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Connect supported messaging platforms such as Telegram, Discord, or Slack.",
         how_to: "Settings > Messaging Channels",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "channels.disconnect_platform",
@@ -584,7 +498,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Disconnect a previously configured messaging platform.",
         how_to: "Settings > Messaging Channels",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "channels.test_credentials",
@@ -594,7 +507,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Validate platform credentials or connection state before using a channel.",
         how_to: "Settings > Messaging Channels",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "channels.set_default_channel",
@@ -604,7 +516,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Choose which messaging channel should be used by default.",
         how_to: "Settings > Messaging Channels",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "settings.configure_ai",
@@ -614,7 +525,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Adjust AI-related settings and agent behavior preferences.",
         how_to: "Settings > Developer Options > AI Configuration",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "settings.manage_privacy_analytics",
@@ -624,7 +534,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Control privacy, analytics, and related data handling preferences.",
         how_to: "Settings > Privacy (direct route)",
         status: CapabilityStatus::Stable,
-        privacy: DIAGNOSTICS_TO_BACKEND,
     },
     Capability {
         id: "settings.view_billing",
@@ -634,7 +543,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Open subscription, included usage, and pay-as-you-go billing views for your active team.",
         how_to: "Settings > Billing & Usage",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "settings.manage_subscription_plan",
@@ -644,7 +552,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Upgrade plans or open the billing portal to manage subscription-backed usage tiers.",
         how_to: "Settings > Billing & Usage",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "settings.manage_credits",
@@ -654,7 +561,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "View pay-as-you-go credit balances, top up overage credits, and configure auto-recharge.",
         how_to: "Settings > Billing & Usage",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "settings.add_payment_methods",
@@ -664,7 +570,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Add or manage saved payment methods for billing and auto-recharge.",
         how_to: "Settings > Billing & Usage > Payment Methods",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "settings.developer_options",
@@ -674,7 +579,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Open developer-focused panels for diagnostics, skills, AI config, and memory tools.",
         how_to: "Settings > Developer Options",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "settings.debug_webhooks",
@@ -685,7 +589,6 @@ const CAPABILITIES: &[Capability] = &[
             "Inspect Composio trigger history and find the daily JSONL archive files stored by the app.",
         how_to: "Settings > Developer Options > Webhooks",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "settings.manage_service",
@@ -695,7 +598,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Install, start, stop, restart, uninstall, or inspect the optional desktop background service.",
         how_to: "Settings > Developer Options > Tauri Commands",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "settings.clear_app_data",
@@ -705,7 +607,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Sign out and permanently clear local app data, including skills data.",
         how_to: "Settings > Log Out & Clear App Data",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "settings.delete_all_data",
@@ -715,7 +616,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Delete all local data and reset the app from the destructive settings section.",
         how_to: "Settings > Delete All Data",
         status: CapabilityStatus::ComingSoon,
-        privacy: None,
     },
     Capability {
         id: "automation.view_cron_jobs",
@@ -725,7 +625,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Review scheduled jobs available to the runtime.",
         how_to: "Settings > Cron Jobs",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "automation.set_job_intervals",
@@ -735,7 +634,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Configure how often a scheduled job should run.",
         how_to: "Settings > Cron Jobs",
         status: CapabilityStatus::Stable,
-        privacy: None,
     },
     Capability {
         id: "automation.view_execution_history",
@@ -745,7 +643,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Inspect past runs and results for scheduled jobs.",
         how_to: "Settings > Cron Jobs",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     // ── Proactive agents ─────────────────────────────────────────────────────
     Capability {
@@ -756,7 +653,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Daily proactive agent that reviews calendar, tasks, emails, and market context to deliver a morning summary.",
         how_to: "Automatic after onboarding (runs daily at 7 AM). Adjust schedule via Settings > Cron Jobs.",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     Capability {
         id: "automation.welcome_agent",
@@ -766,7 +662,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "One-shot agent that delivers a personalized, witty welcome message after onboarding completes.",
         how_to: "Automatic — triggered once after onboarding.",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
     // ── Update ──────────────────────────────────────────────────────────────
     Capability {
@@ -777,7 +672,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Query GitHub Releases to see if a newer core binary is available.",
         how_to: "Settings > Developer Options > Check for Updates",
         status: CapabilityStatus::Beta,
-        privacy: DIAGNOSTICS_TO_BACKEND,
     },
     Capability {
         id: "update.apply",
@@ -787,7 +681,6 @@ const CAPABILITIES: &[Capability] = &[
         description: "Download and stage a newer core binary, then restart the sidecar.",
         how_to: "Settings > Developer Options > Apply Update",
         status: CapabilityStatus::Beta,
-        privacy: None,
     },
 ];
 
@@ -903,35 +796,6 @@ mod tests {
             .iter()
             .all(|capability| { capability.category == CapabilityCategory::Automation }));
         assert!(!capabilities.is_empty());
-    }
-
-    #[test]
-    fn annotated_capability_exposes_privacy_metadata() {
-        let cap = lookup("conversation.send_text").expect("capability exists");
-        let privacy = cap.privacy.expect("conversation.send_text annotated");
-        assert!(privacy.leaves_device);
-        assert_eq!(privacy.data_kind, PrivacyDataKind::Derived);
-        assert!(privacy.destinations.contains(&"OpenHuman backend"));
-    }
-
-    #[test]
-    fn local_only_capability_marks_no_destinations() {
-        let cap = lookup("local_ai.embed_text").expect("capability exists");
-        let privacy = cap.privacy.expect("local_ai.embed_text annotated");
-        assert!(!privacy.leaves_device);
-        assert_eq!(privacy.data_kind, PrivacyDataKind::Raw);
-        assert!(privacy.destinations.is_empty());
-    }
-
-    #[test]
-    fn unannotated_capability_serializes_without_privacy_field() {
-        let cap = lookup("conversation.create").expect("capability exists");
-        assert!(cap.privacy.is_none());
-        let json = serde_json::to_value(cap).expect("serialize capability");
-        assert!(
-            json.get("privacy").is_none(),
-            "privacy field must be omitted when None: {json}"
-        );
     }
 
     #[test]

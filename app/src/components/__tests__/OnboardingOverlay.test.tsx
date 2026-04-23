@@ -71,7 +71,7 @@ describe('OnboardingOverlay', () => {
     expect(screen.queryByText('Complete')).not.toBeInTheDocument();
   });
 
-  it('renders even when user profile is still loading', () => {
+  it('does not render when user profile is not loaded yet', () => {
     mockUseCoreState.mockReturnValue(makeCoreState({ currentUser: {} }));
 
     render(
@@ -80,7 +80,7 @@ describe('OnboardingOverlay', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(screen.queryByText('Complete')).not.toBeInTheDocument();
   });
 
   it('renders when the user is authenticated and onboarding is incomplete', () => {

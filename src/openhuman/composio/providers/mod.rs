@@ -275,7 +275,6 @@ mod tests {
         assert!(p.email.is_none());
         assert!(p.username.is_none());
         assert!(p.avatar_url.is_none());
-        assert!(p.profile_url.is_none());
         assert!(p.extras.is_null());
     }
 }

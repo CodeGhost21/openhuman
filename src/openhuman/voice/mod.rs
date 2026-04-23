@@ -5,7 +5,6 @@
 //! standalone voice dictation server (hotkey → record → transcribe → insert).
 
 pub mod audio_capture;
-pub(crate) mod cli;
 pub mod dictation_listener;
 pub mod hallucination;
 pub mod hotkey;

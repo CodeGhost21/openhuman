@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useCoreState } from '../providers/CoreStateProvider';
 import { useAppSelector } from '../store/hooks';
-import { selectUnreadCount } from '../store/notificationSlice';
 import { isAccountsFullscreen } from '../utils/accountsFullscreen';
 
 const tabs = [
@@ -68,21 +67,6 @@ const tabs = [
     ),
   },
   {
-    id: 'notifications',
-    label: 'Alerts',
-    path: '/notifications',
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={1.8}
-          d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-        />
-      </svg>
-    ),
-  },
-  {
     id: 'rewards',
     label: 'Rewards',
     path: '/rewards',
@@ -128,7 +112,6 @@ const BottomTabBar = () => {
   const [revealed, setRevealed] = useState(false);
 
   const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
-  const unreadCount = useAppSelector(state => selectUnreadCount(state.notifications.items));
 
   const hiddenPaths = ['/', '/login'];
   if (
@@ -184,7 +167,6 @@ const BottomTabBar = () => {
         <nav className="pointer-events-auto inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
           {tabs.map(tab => {
             const active = isActive(tab.path);
-            const showBadge = tab.id === 'notifications' && unreadCount > 0;
             return (
               <button
                 key={tab.id}
@@ -194,19 +176,8 @@ const BottomTabBar = () => {
                     ? 'bg-white text-stone-900 font-semibold shadow-sm'
                     : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
                 }`}
-                aria-label={
-                  tab.id === 'notifications' && unreadCount > 0
-                    ? `${tab.label} (${unreadCount} unread)`
-                    : tab.label
-                }>
-                <span className="relative inline-flex">
-                  {tab.icon}
-                  {showBadge && (
-                    <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-coral-500 text-[9px] font-bold text-white flex items-center justify-center leading-none">
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </span>
-                  )}
-                </span>
+                aria-label={tab.label}>
+                {tab.icon}
                 <span>{tab.label}</span>
               </button>
             );

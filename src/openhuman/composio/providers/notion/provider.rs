@@ -128,16 +128,6 @@ impl ComposioProvider for NotionProvider {
             data,
             &["data.avatar_url", "data.user.avatar_url", "avatar_url"],
         );
-        let profile_url = pick_str(
-            data,
-            &[
-                "data.url",
-                "data.profile_url",
-                "data.profile.url",
-                "url",
-                "profile_url",
-            ],
-        );
 
         Ok(ProviderUserProfile {
             toolkit: "notion".to_string(),
@@ -146,7 +136,6 @@ impl ComposioProvider for NotionProvider {
             email,
             username,
             avatar_url,
-            profile_url,
             extras: data.clone(),
         })
     }

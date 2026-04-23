@@ -31,8 +31,7 @@ impl SyncReason {
 
 /// Normalized user profile shape returned by every provider.
 ///
-/// The shared fields (`display_name`, `email`, `username`, `avatar_url`,
-/// `profile_url`)
+/// The shared fields (`display_name`, `email`, `username`, `avatar_url`)
 /// cover what the desktop UI actually needs to render a connected
 /// account card. Anything provider-specific (Gmail's `messagesTotal`,
 /// Notion's workspace ids, …) goes into [`extras`](Self::extras) so
@@ -46,7 +45,6 @@ pub struct ProviderUserProfile {
     pub email: Option<String>,
     pub username: Option<String>,
     pub avatar_url: Option<String>,
-    pub profile_url: Option<String>,
     /// Provider-specific extras (raw JSON object).
     #[serde(default)]
     pub extras: serde_json::Value,
