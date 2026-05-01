@@ -67,6 +67,9 @@ export const CONSUMER_FIRST_SESSION_ENABLED =
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';
 
+/** Sentry DSN for the React frontend. Leave blank to disable. */
+export const SENTRY_DSN = (import.meta.env.VITE_SENTRY_DSN as string | undefined)?.trim() || '';
+
 /** Backend API URL (web fallback when core RPC is unavailable). */
 export const BACKEND_URL =
   (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim() || DEFAULT_BACKEND_URL;
@@ -98,6 +101,17 @@ export const APP_ENVIRONMENT: 'production' | 'staging' | 'development' = IS_DEV
 export const BUILD_SHA = ((import.meta.env.VITE_BUILD_SHA as string | undefined) ?? '')
   .trim()
   .slice(0, 12);
+
+/**
+ * Canonical Sentry release identifier: `openhuman@<version>[+<short_sha>]`.
+ *
+ * Must match the tag computed by `app/vite.config.ts` (for source-map upload)
+ * and by the Tauri shell + Rust core when those phases re-introduce Sentry,
+ * so events from every surface group under the same release.
+ */
+export const SENTRY_RELEASE = BUILD_SHA
+  ? `openhuman@${APP_VERSION}+${BUILD_SHA}`
+  : `openhuman@${APP_VERSION}`;
 
 /**
  * Minimum **desktop app** semver required for OAuth deep-link completion (`openhuman://oauth/success`).

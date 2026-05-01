@@ -20,6 +20,11 @@ export const WHAT_LEAVES_ITEMS: PrivacyLeaveItem[] = [
     title: 'Third-party integrations',
     body: 'Third-party integrations like Gmail, Slack, or Notion talk to those services on your behalf only with your explicit permission.',
   },
+  {
+    id: 'sentry',
+    title: 'Crash reports (opt-in)',
+    body: 'When you opt into analytics, anonymous crash reports go to Sentry: error message, stack trace, OS / browser / device, and a stable anonymous user id. No request bodies, cookies, or app state.',
+  },
 ];
 
 export const WHAT_LEAVES_HEADLINE = 'Local by default. Cloud when you ask.';

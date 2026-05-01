@@ -81,7 +81,26 @@ vi.mock('../utils/config', () => ({
   TELEGRAM_BOT_USERNAME: 'openhuman_bot',
   LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
   APP_VERSION: '0.0.0-test',
+  APP_ENVIRONMENT: 'development',
+  BUILD_SHA: '',
+  SENTRY_DSN: '',
+  SENTRY_RELEASE: 'openhuman@0.0.0-test',
   DEV_JWT_TOKEN: undefined,
+}));
+
+// Mock @sentry/react so tests don't initialize a real client or require a DSN
+vi.mock('@sentry/react', () => ({
+  init: vi.fn(),
+  ErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
+  getClient: vi.fn(() => undefined),
+  flush: vi.fn().mockResolvedValue(true),
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+  functionToStringIntegration: vi.fn(() => ({ name: 'FunctionToString' })),
+  linkedErrorsIntegration: vi.fn(() => ({ name: 'LinkedErrors' })),
+  dedupeIntegration: vi.fn(() => ({ name: 'Dedupe' })),
+  browserApiErrorsIntegration: vi.fn(() => ({ name: 'BrowserApiErrors' })),
+  globalHandlersIntegration: vi.fn(() => ({ name: 'GlobalHandlers' })),
 }));
 
 vi.mock('../services/backendUrl', () => ({

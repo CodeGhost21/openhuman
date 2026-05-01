@@ -1,6 +1,8 @@
 import { defineConfig, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +11,54 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 const host = process.env.TAURI_DEV_HOST;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(
+  readFileSync(resolve(__dirname, "package.json"), "utf8"),
+) as { version: string };
+
+// Canonical release tag — must match `SENTRY_RELEASE` exported from
+// `app/src/utils/config.ts` (and the eventual Tauri-shell + Core tags) so
+// events from every surface group under the same Sentry release.
+function computeSentryRelease(): string {
+  const raw = (process.env.SENTRY_RELEASE ?? "").trim();
+  if (raw) return raw;
+  const sha = (process.env.VITE_BUILD_SHA ?? "").trim().slice(0, 12);
+  return sha
+    ? `openhuman@${pkg.version}+${sha}`
+    : `openhuman@${pkg.version}`;
+}
+
+// Source-map upload runs only when `SENTRY_AUTH_TOKEN` is set (CI). Local dev
+// and staging builds without the token skip the plugin silently. `SENTRY_ORG`
+// and `SENTRY_PROJECT` come from CI env (project = the React Sentry project).
+function maybeSentryPlugin(): PluginOption | null {
+  const authToken = process.env.SENTRY_AUTH_TOKEN;
+  if (!authToken) return null;
+  return sentryVitePlugin({
+    authToken,
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    release: {
+      name: computeSentryRelease(),
+      // The frontend already passes this release into Sentry.init(); leaving
+      // the plugin's virtual release-injection module on conflicts with the
+      // node-polyfills transform under CEF and breaks bundle init order.
+      inject: false,
+    },
+    sourcemaps: {
+      // Anchor at this config file's directory so cwd from `cargo tauri build`
+      // (which invokes vite from `app/`) doesn't matter. Resolved by the
+      // plugin against `process.cwd()` if relative, which previously caused
+      // silent "no matching sources" upload failures.
+      assets: [
+        resolve(__dirname, "dist/**/*.js"),
+        resolve(__dirname, "dist/**/*.map"),
+      ],
+      // Strip the .map files after upload so end users don't receive them.
+      filesToDeleteAfterUpload: [resolve(__dirname, "dist/**/*.map")],
+    },
+    telemetry: false,
+  });
+}
 
 function guardCefRelListSupportsPlugin(): PluginOption {
   return {
@@ -58,7 +108,8 @@ export default defineConfig(async () => ({
     }),
     guardCefRelListSupportsPlugin(),
     react(),
-  ] as PluginOption[],
+    maybeSentryPlugin(),
+  ].filter(Boolean) as PluginOption[],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

@@ -9,11 +9,13 @@ import './index.css';
 import { getCoreStateSnapshot } from './lib/coreState/store';
 import OverlayApp from './overlay/OverlayApp';
 import './polyfills';
+import { initSentry } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
 import { primeActiveUserId } from './store/userScopedStorage';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 import { getActiveUserIdFromCore } from './utils/tauriCommands';
 
+initSentry();
 setStoreForApiClient(() => getCoreStateSnapshot().snapshot.sessionToken);
 
 const currentWindowLabel = tauriRuntimeAvailable() ? getCurrentWindow().label : 'main';
