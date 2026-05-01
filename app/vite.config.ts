@@ -27,21 +27,44 @@ function computeSentryRelease(): string {
     : `openhuman@${pkg.version}`;
 }
 
-// Source-map upload runs only when `SENTRY_AUTH_TOKEN` is set (CI). Local dev
-// and staging builds without the token skip the plugin silently. `SENTRY_ORG`
-// and `SENTRY_PROJECT` come from CI env (project = the React Sentry project).
+// Source-map upload runs only when SENTRY_AUTH_TOKEN is set. SENTRY_PROJECT
+// defaults to SENTRY_PROJECT_REACT so the same .env drives Vite (React) /
+// sentry-cli (Tauri / Core) uploads without the caller having to remember
+// to set SENTRY_PROJECT inline for the React build.
 function maybeSentryPlugin(): PluginOption | null {
   const authToken = process.env.SENTRY_AUTH_TOKEN;
-  if (!authToken) return null;
+  const org = process.env.SENTRY_ORG;
+  const project = process.env.SENTRY_PROJECT || process.env.SENTRY_PROJECT_REACT;
+  const release = computeSentryRelease();
+
+  if (!authToken) {
+    console.warn("[sentry-vite-plugin] skipped: SENTRY_AUTH_TOKEN not set");
+    return null;
+  }
+  if (!org) {
+    console.warn("[sentry-vite-plugin] skipped: SENTRY_ORG not set");
+    return null;
+  }
+  if (!project) {
+    console.warn(
+      "[sentry-vite-plugin] skipped: SENTRY_PROJECT (or SENTRY_PROJECT_REACT) not set",
+    );
+    return null;
+  }
+  console.info(
+    `[sentry-vite-plugin] uploading source maps to ${org}/${project} for release ${release}`,
+  );
+
   return sentryVitePlugin({
     authToken,
-    org: process.env.SENTRY_ORG,
-    project: process.env.SENTRY_PROJECT,
+    org,
+    project,
     release: {
-      name: computeSentryRelease(),
+      name: release,
       // The frontend already passes this release into Sentry.init(); leaving
       // the plugin's virtual release-injection module on conflicts with the
       // node-polyfills transform under CEF and breaks bundle init order.
+      // Debug-IDs are injected independently and don't depend on this flag.
       inject: false,
     },
     sourcemaps: {
