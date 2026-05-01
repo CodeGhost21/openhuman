@@ -134,8 +134,7 @@ fn event_matches_file_constraints(meta: &tracing::Metadata<'_>, constraints: &[S
 /// 2. Sets up an `EnvFilter` from `RUST_LOG` or the defaults.
 /// 3. Detects terminal capabilities for ANSI colors.
 /// 4. Registers a formatting layer with [`CleanCliFormat`].
-/// 5. Integrates Sentry for error tracking.
-/// 6. Bridges legacy `log::info!` macros.
+/// 5. Bridges legacy `log::info!` macros.
 ///
 /// It is idempotent and will only initialize the subscriber once per process.
 pub fn init_for_cli_run(verbose: bool, default_scope: CliLogDefault) {
@@ -194,23 +193,10 @@ pub fn init_for_cli_run(verbose: bool, default_scope: CliLogDefault) {
                 event_matches_file_constraints(meta, &file_constraints)
             }));
 
-        // Build the Sentry integration layer.
-        let sentry_layer =
-            sentry::integrations::tracing::layer().event_filter(|md: &tracing::Metadata<'_>| {
-                match *md.level() {
-                    Level::ERROR => sentry::integrations::tracing::EventFilter::Event,
-                    Level::WARN | Level::INFO => {
-                        sentry::integrations::tracing::EventFilter::Breadcrumb
-                    }
-                    _ => sentry::integrations::tracing::EventFilter::Ignore,
-                }
-            });
-
-        // Register the subscriber with all layers.
+        // Register the subscriber.
         let _ = tracing_subscriber::registry()
             .with(filter)
             .with(fmt_layer)
-            .with(sentry_layer)
             .try_init();
 
         // Bridge the `log` crate.

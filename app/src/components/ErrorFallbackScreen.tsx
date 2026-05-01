@@ -4,12 +4,9 @@ import { openUrl } from '../utils/openUrl';
 /**
  * ErrorFallbackScreen
  *
- * Full-screen recovery UI shown when the Sentry ErrorBoundary catches
+ * Full-screen recovery UI shown when an ErrorBoundary catches
  * a catastrophic React render error. Self-contained with zero dependencies
  * on Redux, Router, or any context provider.
- *
- * The ErrorReportNotification lives in a separate React root, so the user
- * can still review and report the error from this screen.
  */
 
 interface ErrorFallbackScreenProps {

@@ -244,22 +244,6 @@ fn apply_env_overrides_web_search_max_results_and_timeout_clamped() {
     ]);
 }
 
-#[test]
-fn apply_env_overrides_picks_up_sentry_dsn() {
-    let _g = ENV_LOCK.lock().unwrap();
-    clear_env(&["OPENHUMAN_SENTRY_DSN"]);
-    let mut cfg = Config::default();
-    unsafe {
-        std::env::set_var("OPENHUMAN_SENTRY_DSN", "https://token@sentry.io/1");
-    }
-    cfg.apply_env_overrides();
-    assert_eq!(
-        cfg.observability.sentry_dsn.as_deref(),
-        Some("https://token@sentry.io/1")
-    );
-    clear_env(&["OPENHUMAN_SENTRY_DSN"]);
-}
-
 // ── EnvLookup seam for resolve_runtime_config_dirs ─────────────
 
 #[derive(Default)]
@@ -572,27 +556,6 @@ fn env_overlay_node_flags_respect_bool_parser() {
     // Blank version does NOT clobber.
     cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_NODE_VERSION", "   "));
     assert_eq!(cfg.node.version, original_version);
-}
-
-#[test]
-fn env_overlay_sentry_dsn_trims_and_ignores_blank() {
-    let mut cfg = Config::default();
-    cfg.observability.sentry_dsn = None;
-
-    cfg.apply_env_overlay_with(
-        &HashMapEnv::new().with("OPENHUMAN_SENTRY_DSN", "  https://t@sentry.io/42  "),
-    );
-    assert_eq!(
-        cfg.observability.sentry_dsn.as_deref(),
-        Some("https://t@sentry.io/42")
-    );
-
-    // Blank value — ignored (previous DSN retained).
-    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_SENTRY_DSN", "   "));
-    assert_eq!(
-        cfg.observability.sentry_dsn.as_deref(),
-        Some("https://t@sentry.io/42")
-    );
 }
 
 #[test]

@@ -821,16 +821,6 @@ impl Config {
             }
         }
 
-        let dsn_value = env
-            .get("OPENHUMAN_SENTRY_DSN")
-            .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(|s| s.to_string()));
-        if let Some(dsn) = dsn_value {
-            let dsn = dsn.trim();
-            if !dsn.is_empty() {
-                self.observability.sentry_dsn = Some(dsn.to_string());
-            }
-        }
-
         if let Some(flag) = env.get("OPENHUMAN_ANALYTICS_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {

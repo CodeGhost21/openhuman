@@ -77,7 +77,6 @@ vi.mock('../utils/config', () => ({
   IS_PROD: false,
   DEV_FORCE_ONBOARDING: false,
   SKILLS_GITHUB_REPO: 'test/skills',
-  SENTRY_DSN: undefined,
   BACKEND_URL: 'http://localhost:5005',
   TELEGRAM_BOT_USERNAME: 'openhuman_bot',
   LATEST_APP_DOWNLOAD_URL: 'https://github.com/tinyhumansai/openhuman/releases/latest',
@@ -124,22 +123,6 @@ vi.mock('redux-persist/integration/react', () => ({
 vi.mock('redux-logger', () => ({
   createLogger: () => () => (next: (action: unknown) => unknown) => (action: unknown) =>
     next(action),
-}));
-
-// Mock Sentry
-vi.mock('@sentry/react', () => ({
-  init: vi.fn(),
-  ErrorBoundary: ({
-    children,
-  }: {
-    children: React.ReactNode;
-    fallback?: unknown;
-    onError?: unknown;
-  }) => children,
-  withScope: vi.fn(),
-  captureException: vi.fn(),
-  setTag: vi.fn(),
-  setUser: vi.fn(),
 }));
 
 // Silence console during tests to keep output clean

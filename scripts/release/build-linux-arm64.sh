@@ -5,9 +5,8 @@
 #   build-linux-arm64.sh <tag>
 #
 # Environment:
-#   GITHUB_TOKEN          — upload to release when set
-#   OPENHUMAN_SENTRY_DSN  — optional Sentry DSN baked into the binary
-#   UPLOAD_REPO           — GitHub repo slug (default: tinyhumansai/openhuman)
+#   GITHUB_TOKEN   — upload to release when set
+#   UPLOAD_REPO    — GitHub repo slug (default: tinyhumansai/openhuman)
 set -euo pipefail
 
 TAG="${1:?Usage: build-linux-arm64.sh <tag>}"

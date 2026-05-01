@@ -5,10 +5,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ObservabilityConfig {
-    /// Sentry DSN for error reporting. Overridden by `OPENHUMAN_SENTRY_DSN` env var.
-    #[serde(default)]
-    pub sentry_dsn: Option<String>,
-
     /// Whether anonymized analytics and error reporting is enabled.
     /// Defaults to `true`. Users can disable via settings or CLI.
     #[serde(default = "default_analytics_enabled")]
@@ -22,7 +18,6 @@ fn default_analytics_enabled() -> bool {
 impl Default for ObservabilityConfig {
     fn default() -> Self {
         Self {
-            sentry_dsn: None,
             analytics_enabled: true,
         }
     }
@@ -36,7 +31,6 @@ mod tests {
     #[test]
     fn default_enables_analytics() {
         let cfg = ObservabilityConfig::default();
-        assert!(cfg.sentry_dsn.is_none());
         assert!(cfg.analytics_enabled);
     }
 
@@ -54,7 +48,6 @@ mod tests {
     #[test]
     fn deserialize_respects_explicit_analytics_flag() {
         let cfg: ObservabilityConfig = serde_json::from_value(json!({
-            "backend": "otel",
             "analytics_enabled": false
         }))
         .unwrap();
@@ -62,17 +55,12 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_preserves_all_fields() {
+    fn round_trip_preserves_analytics_field() {
         let original = ObservabilityConfig {
-            sentry_dsn: Some("https://token@sentry.io/1".into()),
             analytics_enabled: false,
         };
         let s = serde_json::to_string(&original).unwrap();
         let back: ObservabilityConfig = serde_json::from_str(&s).unwrap();
-        assert_eq!(
-            back.sentry_dsn.as_deref(),
-            Some("https://token@sentry.io/1")
-        );
         assert!(!back.analytics_enabled);
     }
 }

@@ -54,12 +54,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
       sha: ${{ steps.resolve.outputs.sha }}
-      # First 12 chars of `sha` — matches the truncation done at runtime by
-      # app/src/utils/config.ts, app/vite.config.ts, src/main.rs, and
-      # app/src-tauri/src/lib.rs when they compute the canonical
-      # `openhuman@<version>+<short_sha>` release tag. Use this (not the
-      # full `sha`) anywhere CI constructs SENTRY_RELEASE so uploaded
-      # artifacts attach to the same release events report.
+      # First 12 chars of `sha` for the canonical release tag.
       short_sha: ${{ steps.resolve.outputs.short_sha }}
       build_ref: ${{ steps.resolve.outputs.build_ref }}
       release_enabled: ${{ steps.resolve.outputs.release_enabled }}
@@ -157,10 +152,6 @@ jobs:
             RELEASE_ENABLED="false"
             BASE_URL="https://staging-api.tinyhumans.ai/"
           fi
-          # Match the 12-char truncation runtime code applies to
-          # VITE_BUILD_SHA / OPENHUMAN_BUILD_SHA when constructing the release
-          # tag at startup, so SENTRY_RELEASE assembled in CI agrees with
-          # the tag events emit.
           SHORT_SHA="${SHA:0:12}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -438,8 +429,7 @@ jobs:
             core.setOutput('json', JSON.stringify(config));
 
       # Note: vite build runs via tauri.conf.json's beforeBuildCommand during
-      # the "Build and package Tauri app" step below. A separate frontend build
-      # here would just double memory pressure (sentry-vite-plugin peaks hard).
+      # the "Build and package Tauri app" step below.
       #
       # The core no longer ships as a sidecar — it's linked into the Tauri
       # binary as a path dep (`openhuman_core` in app/src-tauri/Cargo.toml)
@@ -460,42 +450,9 @@ jobs:
           OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VITE_OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
-          # Re-declare Vite env so tauri.conf.json's `beforeBuildCommand`
-          # (`vite build`) bakes Sentry + debug flags into the final bundle.
-          # Vite is invoked via tauri.conf.json's beforeBuildCommand during
-          # `cargo tauri build`, so these env vars must be present here.
-          # React frontend Sentry DSN — separate Sentry project.
-          VITE_SENTRY_DSN: ${{ vars.OPENHUMAN_REACT_SENTRY_DSN }}
-          # Tauri shell (desktop host) Sentry DSN — separate Sentry project
-          # from the React frontend and the Rust core. Baked into the shell
-          # binary via `option_env!("OPENHUMAN_TAURI_SENTRY_DSN")` at compile
-          # time so the released desktop app reports to its own project.
-          OPENHUMAN_TAURI_SENTRY_DSN: ${{ vars.OPENHUMAN_TAURI_SENTRY_DSN }}
-          # Bake the build SHA into the Tauri shell so its Sentry release tag
-          # (`openhuman@<version>+<sha>`) matches the React bundle and core
-          # sidecar — events across all three surfaces group under one release.
           OPENHUMAN_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
           VITE_DEBUG: ${{ vars.VITE_DEBUG }}
-          # Sentry release tracking (#405) — must match the Vite build triggered
-          # by Tauri so source maps uploaded there resolve correctly against the
-          # final bundle produced by the tauri-driven build.
           VITE_BUILD_SHA: ${{ needs.prepare-build.outputs.sha }}
-          # Use short_sha (12 chars) — matches what config.ts / vite.config.ts /
-          # main.rs / app/src-tauri/src/lib.rs all slice VITE_BUILD_SHA /
-          # OPENHUMAN_BUILD_SHA down to at runtime when emitting events. The
-          # vite plugin reads SENTRY_RELEASE raw, so a long-SHA value here
-          # would tag uploads against a different release than events report.
-          SENTRY_RELEASE:
-            openhuman@${{ needs.prepare-build.outputs.version }}+${{
-            needs.prepare-build.outputs.short_sha }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          # SENTRY_PROJECT here is consumed by sentry-vite-plugin during the
-          # Vite build that runs inside `cargo tauri build` (beforeBuildCommand)
-          # — it uploads frontend source maps to the React Sentry project.
-          # Core and Tauri-shell debug symbols are uploaded to their own
-          # projects in the dedicated steps below.
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_REACT }}
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
@@ -512,45 +469,6 @@ jobs:
             NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build --debug -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
           else
             NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
-          fi
-
-      # Upload Rust debug info to Sentry so backend + Tauri-shell stack traces
-      # symbolicate in production. The frontend source maps are handled by
-      # sentry-vite-plugin in the build step above; this is the Rust half.
-      # Core sidecar and Tauri shell go to **separate Sentry projects**
-      # (matching their separate DSNs) so events show up in the right place.
-      # Symbols are keyed by debug-ID, so it's safe to run per-matrix-target
-      # without collisions — Sentry merges artifacts across platforms.
-      - name: Upload core sidecar debug symbols to Sentry
-        if:
-          needs.prepare-build.outputs.release_enabled == 'true' && env.SENTRY_AUTH_TOKEN
-          != ''
-        shell: bash
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_CORE }}
-          # Must match the release tag the running core binary reports
-          # (`openhuman@<version>+<short_sha>`, see `build_release_tag` in
-          # src/main.rs). Uses short_sha (12 chars) — see the prepare-build
-          # outputs comment. If this drifts, DIFs attach to a different
-          # release than events and stack traces stay un-symbolicated.
-          SENTRY_RELEASE:
-            openhuman@${{ needs.prepare-build.outputs.version }}+${{
-            needs.prepare-build.outputs.short_sha }}
-          VERSION: ${{ needs.prepare-build.outputs.version }}
-          MATRIX_TARGET: ${{ matrix.settings.target }}
-        run: |
-          set -euo pipefail
-          # Core is linked into the Tauri binary as a path dep, so all Rust
-          # debug info — core + shell — lives under the shell's target dir.
-          # upload-dif scans recursively.
-          deps_dir="app/src-tauri/target/${MATRIX_TARGET}/release/deps"
-          if [ -d "$deps_dir" ]; then
-            echo "==> Uploading symbols from $deps_dir to ${SENTRY_PROJECT}"
-            bash scripts/upload_sentry_symbols.sh "$VERSION" "$deps_dir"
-          else
-            echo "==> Skipping $deps_dir (not present)"
           fi
 
       # tauri-action previously uploaded non-macOS installer assets directly
@@ -684,52 +602,6 @@ jobs:
           path: |
             app/src-tauri/target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/**
             target/${{ matrix.settings.target }}/${{ inputs.build_target == 'staging' && 'debug' || 'release' }}/bundle/**
-
-  # =========================================================================
-  # Phase 5: Record a single Sentry deploy marker once the release has
-  # actually been published. Hangs off `publish-release` rather than
-  # `build-desktop` so we don't write a Sentry deploy row for a release
-  # that subsequently fails `build-docker` / `publish-updater-manifest`
-  # and gets deleted by `cleanup-failed-release`. `publish-release` itself
-  # already requires the full build matrix + docker + updater manifest to
-  # succeed, so this transitively waits for all of them.
-  #
-  # `sentry-cli releases deploys ... new` does NOT deduplicate by
-  # (release, env), so this job stays single-runner — running it inside
-  # the matrix would add one row per platform.
-  # =========================================================================
-  record-sentry-deploy:
-    name: Record Sentry deploy marker
-    runs-on: ubuntu-latest
-    environment: Production
-    needs: [prepare-build, publish-release]
-    if: needs.prepare-build.outputs.release_enabled == 'true'
-    env:
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-    steps:
-      - name: Install sentry-cli
-        if: env.SENTRY_AUTH_TOKEN != ''
-        shell: bash
-        run: curl -sSf https://sentry.io/get-cli/ | bash
-      - name: Record deploy marker
-        if: env.SENTRY_AUTH_TOKEN != ''
-        shell: bash
-        env:
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          # Marker lives on the React project's release; events from all
-          # surfaces share the same `openhuman@<version>+<short_sha>`
-          # release tag, so the marker on any single project's release
-          # shows in Sentry's "Deploys" tab for that release group.
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT_REACT }}
-          SENTRY_RELEASE:
-            openhuman@${{ needs.prepare-build.outputs.version }}+${{
-            needs.prepare-build.outputs.short_sha }}
-          SENTRY_ENVIRONMENT: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
-        run: |
-          set -euo pipefail
-          echo "==> Recording deploy marker: ${SENTRY_RELEASE} -> ${SENTRY_ENVIRONMENT}"
-          sentry-cli releases deploys "${SENTRY_RELEASE}" new \
-            -e "${SENTRY_ENVIRONMENT}"
 
   # =========================================================================
   # Phase 3b: Build & push Docker image (runs parallel with build-desktop)

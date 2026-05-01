@@ -4,7 +4,6 @@ import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
 import { getCoreStateSnapshot, patchCoreStateSnapshot } from '../lib/coreState/store';
 import { consumeLoginToken } from '../services/api/authApi';
-import { buildManualSentryEvent, enqueueError } from '../services/errorReportQueue';
 import {
   beginDeepLinkAuthProcessing,
   completeDeepLinkAuthProcessing,
@@ -157,21 +156,7 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       } catch (e) {
         console.warn('[DeepLink] Could not open latest release URL', e);
       }
-      enqueueError({
-        id: crypto.randomUUID(),
-        timestamp: Date.now(),
-        source: 'manual',
-        title: 'Update OpenHuman to finish OAuth',
-        message: msg,
-        sentryEvent: buildManualSentryEvent(
-          { type: 'OAuthStaleAppVersion', value: `${versionGate.current}<${versionGate.minimum}` },
-          {
-            component: 'desktopDeepLinkListener',
-            current: versionGate.current,
-            minimum: versionGate.minimum,
-          }
-        ),
-      });
+      console.error('[DeepLink] OAuth blocked by stale app version:', msg);
       window.dispatchEvent(
         new CustomEvent('oauth:stale-app', {
           detail: {

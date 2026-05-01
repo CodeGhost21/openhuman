@@ -1,4 +1,3 @@
-import * as Sentry from '@sentry/react';
 import { useEffect } from 'react';
 import { Provider } from 'react-redux';
 import { HashRouter as Router, useLocation, useNavigate } from 'react-router-dom';
@@ -9,7 +8,6 @@ import BottomTabBar from './components/BottomTabBar';
 import CommandProvider from './components/commands/CommandProvider';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import DictationHotkeyManager from './components/DictationHotkeyManager';
-import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import MeshGradient from './components/MeshGradient';
 import OpenhumanLinkModal from './components/OpenhumanLinkModal';
@@ -21,7 +19,6 @@ import { startWebviewNotificationsService } from './lib/webviewNotifications';
 import ChatRuntimeProvider from './providers/ChatRuntimeProvider';
 import CoreStateProvider, { useCoreState } from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
-import { tagErrorSource } from './services/errorReportQueue';
 import { startWebviewAccountService } from './services/webviewAccountService';
 import { persistor, store } from './store';
 import { useAppDispatch, useAppSelector } from './store/hooks';
@@ -39,33 +36,25 @@ startNativeNotificationsService();
 
 function App() {
   return (
-    <Sentry.ErrorBoundary
-      fallback={({ error, componentStack, resetError }) => (
-        <ErrorFallbackScreen error={error} componentStack={componentStack} onReset={resetError} />
-      )}
-      onError={(_error, componentStack, eventId) => {
-        tagErrorSource(eventId, 'react', componentStack);
-      }}>
-      <Provider store={store}>
-        <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
-          <CoreStateProvider>
-            <SocketProvider>
-              <ChatRuntimeProvider>
-                <Router>
-                  <CommandProvider>
-                    <ServiceBlockingGate>
-                      <AppShell />
-                      <DictationHotkeyManager />
-                      <LocalAIDownloadSnackbar />
-                    </ServiceBlockingGate>
-                  </CommandProvider>
-                </Router>
-              </ChatRuntimeProvider>
-            </SocketProvider>
-          </CoreStateProvider>
-        </PersistGate>
-      </Provider>
-    </Sentry.ErrorBoundary>
+    <Provider store={store}>
+      <PersistGate loading={<PersistRehydrationScreen />} persistor={persistor}>
+        <CoreStateProvider>
+          <SocketProvider>
+            <ChatRuntimeProvider>
+              <Router>
+                <CommandProvider>
+                  <ServiceBlockingGate>
+                    <AppShell />
+                    <DictationHotkeyManager />
+                    <LocalAIDownloadSnackbar />
+                  </ServiceBlockingGate>
+                </CommandProvider>
+              </Router>
+            </ChatRuntimeProvider>
+          </SocketProvider>
+        </CoreStateProvider>
+      </PersistGate>
+    </Provider>
   );
 }
 

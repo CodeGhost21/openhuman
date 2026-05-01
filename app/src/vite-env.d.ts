@@ -5,7 +5,6 @@ interface ImportMetaEnv {
   readonly VITE_OPENHUMAN_CORE_RPC_URL?: string;
   readonly VITE_BACKEND_URL?: string;
   readonly VITE_SKILLS_GITHUB_REPO?: string;
-  readonly VITE_SENTRY_DSN?: string;
   readonly VITE_BUILD_SHA?: string;
   readonly VITE_DEV_JWT_TOKEN?: string;
   readonly VITE_DEV_FORCE_ONBOARDING?: string;

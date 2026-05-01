@@ -67,9 +67,6 @@ export const CONSUMER_FIRST_SESSION_ENABLED =
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';
 
-/** Sentry DSN for error reporting. Leave blank to disable. */
-export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
-
 /** Backend API URL (web fallback when core RPC is unavailable). */
 export const BACKEND_URL =
   (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim() || DEFAULT_BACKEND_URL;
@@ -86,11 +83,10 @@ export const DEV_JWT_TOKEN = import.meta.env.DEV
 export const APP_VERSION = packageJson.version;
 
 /**
- * Deployment environment reported to Sentry and other observability surfaces.
+ * Deployment environment for observability surfaces.
  *
  * Derived from `VITE_OPENHUMAN_APP_ENV` (set by CI for production / staging
- * bundles). Falls back to `development` in non-production builds so local
- * debugging never mingles with real user events.
+ * bundles). Falls back to `development` in non-production builds.
  */
 export const APP_ENVIRONMENT: 'production' | 'staging' | 'development' = IS_DEV
   ? 'development'
@@ -102,17 +98,6 @@ export const APP_ENVIRONMENT: 'production' | 'staging' | 'development' = IS_DEV
 export const BUILD_SHA = ((import.meta.env.VITE_BUILD_SHA as string | undefined) ?? '')
   .trim()
   .slice(0, 12);
-
-/**
- * Canonical Sentry release identifier: `openhuman@<version>[+<short_sha>]`.
- *
- * Matches the tag the Rust core sidecar reports (see `src/main.rs`) so events
- * from the frontend, the core, and source-map uploads all group under the
- * same release in the Sentry dashboard.
- */
-export const SENTRY_RELEASE = BUILD_SHA
-  ? `openhuman@${APP_VERSION}+${BUILD_SHA}`
-  : `openhuman@${APP_VERSION}`;
 
 /**
  * Minimum **desktop app** semver required for OAuth deep-link completion (`openhuman://oauth/success`).

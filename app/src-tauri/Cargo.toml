@@ -83,14 +83,6 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 log = "0.4"
 env_logger = "0.11"
 
-# Sentry for the Tauri shell (desktop host) process — separate Sentry project
-# from the React frontend and the Rust core sidecar. DSN is baked at compile
-# time via `option_env!("OPENHUMAN_TAURI_SENTRY_DSN")` in `lib.rs::run()` and
-# can be overridden at runtime via the same env var. Feature set mirrors the
-# core sidecar (`Cargo.toml` at repo root) minus `tracing` since the shell
-# uses `log` + `env_logger`.
-sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "debug-images", "reqwest", "rustls"] }
-
 # Used by the imessage_scanner module.
 anyhow = "1.0"
 parking_lot = "0.12"
@@ -175,13 +167,6 @@ tauri-plugin-notification = { path = "vendor/tauri-plugin-notification" }
 tokio = { version = "1", features = ["macros", "rt"] }
 tempfile = "3"
 
-# Emit just enough DWARF in release builds for Sentry to symbolicate Rust
-# panics + render surrounding source lines. `line-tables-only` keeps the
-# binary small (only file+line tables, no full type info) while still
-# letting `sentry-cli debug-files upload --include-sources` produce a
-# usable `.src.zip`. `split-debuginfo = "packed"` writes the debug data
-# into a separate `.dSYM` bundle on macOS so the shipped executable
-# itself stays slim.
 [profile.release]
 debug = "line-tables-only"
 split-debuginfo = "packed"

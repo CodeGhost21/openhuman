@@ -104,7 +104,6 @@ tower = { version = "0.5", default-features = false }
 opentelemetry = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "metrics", "http-proto", "reqwest-client", "reqwest-rustls-webpki-roots"] }
-sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "debug-images", "reqwest", "rustls"] }
 tokio-stream = { version = "0.1.18", features = ["full"] }
 url = "2"
 socketioxide = { version = "0.15", features = ["extensions"] }
@@ -164,13 +163,6 @@ whatsapp-web = ["dep:whatsapp-rust", "dep:whatsapp-rust-tokio-transport", "dep:w
 [patch.crates-io]
 whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
 
-# Emit just enough DWARF in release builds for Sentry to symbolicate Rust
-# panics + render surrounding source lines. `line-tables-only` keeps the
-# binary small (only file+line tables, no full type info) while still
-# letting `sentry-cli debug-files upload --include-sources` produce a
-# usable `.src.zip`. `split-debuginfo = "packed"` writes the debug data
-# into a separate `.dSYM` bundle on macOS so the shipped executable
-# itself stays slim.
 [profile.release]
 debug = "line-tables-only"
 split-debuginfo = "packed"
