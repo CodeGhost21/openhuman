@@ -9,11 +9,16 @@ mod core_process;
 mod core_rpc;
 mod dictation_hotkeys;
 mod discord_scanner;
+mod fake_camera;
 mod file_logging;
 mod gmessages_scanner;
 mod imessage_scanner;
 #[cfg(target_os = "macos")]
 mod mascot_native_window;
+mod meet_audio;
+mod meet_call;
+mod meet_scanner;
+mod meet_video;
 mod native_notifications;
 mod notification_settings;
 mod process_kill;
@@ -1254,7 +1259,51 @@ pub fn run() {
             // send COOP/COEP headers, so without this flag the feature
             // silently disappears and huddle/call buttons no-op.
             ("--enable-features", Some("SharedArrayBuffer")),
+            // Allow autoplay (audio + video) without a prior user gesture.
+            // CEF inherits Chromium's default policy, which leaves an
+            // AudioContext suspended until the user interacts with the
+            // page; @remotion/player gates its rAF frame loop on
+            // AudioContext.state === 'running', so on a cold tab the
+            // mascot SVG paints frame 0 and freezes there until the user
+            // alt-tabs / clicks somewhere (which counts as a gesture and
+            // resumes the context — the "fast on revisit" symptom). With
+            // this flag the AudioContext starts in 'running' immediately
+            // and the mascot animates from first paint. We control every
+            // surface in this webview, so dropping the gesture gate is
+            // safe.
+            ("--autoplay-policy", Some("no-user-gesture-required")),
         ];
+        // Mascot fake-camera: bake the SVG into a one-frame Y4M and
+        // point Chromium's fake-video-capture pipeline at it so any
+        // CEF webview that calls `getUserMedia({video:true})` sees the
+        // mascot as the agent's webcam. `--use-fake-ui-for-media-stream`
+        // auto-allows the permission prompt so Meet's join page doesn't
+        // get stuck behind it. The flags are process-level (affect every
+        // CEF webview), which is fine today: only the Meet call window
+        // intentionally requests a camera, and other webviews don't ask
+        // for one. The path string is leaked with `Box::leak` so its
+        // `&str` outlives the args vec we hand to `command_line_args`.
+        let fake_camera_arg: Option<&'static str> =
+            match fake_camera::ensure_mascot_y4m(&file_logging::resolve_data_dir()) {
+                Ok(path) => {
+                    let leaked: &'static str =
+                        Box::leak(path.to_string_lossy().into_owned().into_boxed_str());
+                    log::info!("[cef-startup] fake-camera y4m path={leaked}");
+                    Some(leaked)
+                }
+                Err(err) => {
+                    log::warn!(
+                        "[cef-startup] mascot fake-camera unavailable: {err} \
+                     (Meet will see no camera)"
+                    );
+                    None
+                }
+            };
+        if let Some(path) = fake_camera_arg {
+            args.push(("--use-fake-device-for-media-stream", None));
+            args.push(("--use-fake-ui-for-media-stream", None));
+            args.push(("--use-file-for-fake-video-capture", Some(path)));
+        }
         // Always expose the CDP port, not just in debug. The webview-accounts
         // CDP session opener navigates each embedded provider webview from its
         // `about:blank#openhuman-acct-...` placeholder to the real provider URL
@@ -1319,6 +1368,8 @@ pub fn run() {
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
     let builder = builder.manage(screen_capture::ScreenShareState::new());
+    let builder = builder.manage(meet_call::MeetCallState::new());
+    let builder = builder.manage(meet_audio::MeetAudioState::new());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
@@ -1809,7 +1860,9 @@ pub fn run() {
             mascot_window_show,
             mascot_window_hide,
             file_logging::reveal_logs_folder,
-            file_logging::logs_folder_path
+            file_logging::logs_folder_path,
+            meet_call::meet_call_open_window,
+            meet_call::meet_call_close_window
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

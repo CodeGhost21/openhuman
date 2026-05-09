@@ -3768,3 +3768,327 @@ async fn whatsapp_memory_doc_ingest_e2e() {
     mock_join.abort();
     rpc_join.abort();
 }
+
+/// Regression guard for issue #1289: `openhuman.voice_cloud_transcribe`
+/// must stay registered in the controller registry and reachable via
+/// JSON-RPC dispatch.
+///
+/// The user-visible symptom was "Voice transcription failed: unknown
+/// method: openhuman.voice_cloud_transcribe" — the frontend (mascot
+/// mic-only composer) was calling a method that wasn't reachable.
+/// This test pins both ends:
+///
+/// 1. `/schema` exposes `openhuman.voice_cloud_transcribe` so the
+///    discovery surface stays in sync with the live registry.
+/// 2. Calling the method over RPC does NOT hit the dispatcher's
+///    unknown-method branch (`Err("unknown method: …")`). The call may
+///    still fail downstream (missing audio, unauthenticated, missing
+///    upstream STT key) — but it must reach the registered handler,
+///    which proves the method is wired all the way through.
+#[tokio::test]
+async fn voice_cloud_transcribe_registered_e2e() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 1. /schema must list openhuman.voice_cloud_transcribe ───────────────
+    let schema = reqwest::get(format!("{rpc_base}/schema"))
+        .await
+        .expect("GET /schema")
+        .json::<Value>()
+        .await
+        .expect("schema json");
+    let methods = schema["methods"]
+        .as_array()
+        .unwrap_or_else(|| panic!("/schema must expose methods array: {schema}"));
+    let names: Vec<&str> = methods
+        .iter()
+        .filter_map(|m| m.get("method").and_then(Value::as_str))
+        .collect();
+    assert!(
+        names.contains(&"openhuman.voice_cloud_transcribe"),
+        "voice_cloud_transcribe must appear in /schema dump (got {} methods)",
+        names.len()
+    );
+
+    // ── 2. RPC dispatch must NOT return "unknown method" ───────────────────
+    // Send a minimal payload — it'll fail downstream (no upstream STT
+    // configured in the mock), but the dispatcher should reach the
+    // handler, not the unknown-method branch.
+    let resp = post_json_rpc(
+        &rpc_base,
+        9101,
+        "openhuman.voice_cloud_transcribe",
+        json!({ "audio_base64": "" }),
+    )
+    .await;
+    // Inspect the full error blob, not just `error.message`. A future
+    // server-shape change that moves the dispatcher's unknown-method
+    // string into `error.data` would otherwise let this regression
+    // guard silently pass.
+    let err_blob = resp
+        .get("error")
+        .map(|e| e.to_string().to_ascii_lowercase())
+        .unwrap_or_default();
+    assert!(
+        !err_blob.contains("unknown method"),
+        "voice_cloud_transcribe must be a known method; full response: {resp}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_meet_join_call_validates_and_returns_request_id() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // --- happy path: validates, returns ok + request_id + normalized echo ---
+    let ok = post_json_rpc(
+        &rpc_base,
+        9001,
+        "openhuman.meet_join_call",
+        json!({
+            "meet_url": "https://meet.google.com/abc-defg-hij",
+            "display_name": "  Agent Alice  "
+        }),
+    )
+    .await;
+    let result = assert_no_jsonrpc_error(&ok, "meet_join_call ok");
+    let body = result.get("result").unwrap_or(result);
+    assert_eq!(body.get("ok"), Some(&json!(true)));
+    let request_id = body
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .expect("request_id present");
+    assert!(!request_id.is_empty(), "request_id must not be empty");
+    assert_eq!(
+        body.get("meet_url").and_then(|v| v.as_str()),
+        Some("https://meet.google.com/abc-defg-hij"),
+        "echoed meet_url should be the normalized URL"
+    );
+    assert_eq!(
+        body.get("display_name").and_then(|v| v.as_str()),
+        Some("Agent Alice"),
+        "display_name should be trimmed before echo"
+    );
+
+    // --- bad host: rejected as JSON-RPC error ---
+    let bad_host = post_json_rpc(
+        &rpc_base,
+        9002,
+        "openhuman.meet_join_call",
+        json!({
+            "meet_url": "https://example.com/abc-defg-hij",
+            "display_name": "Agent"
+        }),
+    )
+    .await;
+    assert_jsonrpc_error(&bad_host, "meet_join_call bad_host");
+
+    // --- empty display name: rejected ---
+    let bad_name = post_json_rpc(
+        &rpc_base,
+        9003,
+        "openhuman.meet_join_call",
+        json!({
+            "meet_url": "https://meet.google.com/abc-defg-hij",
+            "display_name": "   "
+        }),
+    )
+    .await;
+    assert_jsonrpc_error(&bad_name, "meet_join_call bad_name");
+
+    rpc_join.abort();
+}
+
+/// Walks the full meet_agent session lifecycle:
+///   start_session → push silent frame → push loud frame ×N → push
+///   silent frames until VAD fires a turn → poll_speech (expects
+///   non-empty PCM from the brain stub) → stop_session.
+///
+/// Pins behavior the shell relies on: the RPC surface accepts
+/// base64-PCM16LE frames, fires a turn on VAD silence after speech,
+/// the brain stub enqueues outbound audio synchronously enough for a
+/// 250 ms-budget poll to see it, and stop_session returns sane
+/// counters. STT / TTS adapters are stubbed in PR1 so this stays
+/// network-free.
+#[tokio::test]
+async fn json_rpc_meet_agent_session_lifecycle() {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let request_id = "e2e-meet-agent";
+
+    // 1) start_session — opens registry slot, defaults sample_rate to 16000.
+    let start = post_json_rpc(
+        &rpc_base,
+        9101,
+        "openhuman.meet_agent_start_session",
+        json!({ "request_id": request_id, "sample_rate_hz": 16_000 }),
+    )
+    .await;
+    let start_result = assert_no_jsonrpc_error(&start, "start_session ok");
+    let start_body = start_result.get("result").unwrap_or(start_result);
+    assert_eq!(start_body.get("ok"), Some(&json!(true)));
+    assert_eq!(
+        start_body.get("request_id").and_then(|v| v.as_str()),
+        Some(request_id)
+    );
+
+    // 2) Push ~1s of "loud" PCM (square wave well above VAD threshold)
+    //    so the brain has enough material to NOT skip the turn.
+    let loud_frame: Vec<i16> = (0..1600)
+        .map(|i| if i % 2 == 0 { 8000i16 } else { -8000 })
+        .collect();
+    let loud_b64 = {
+        let bytes: Vec<u8> = loud_frame.iter().flat_map(|s| s.to_le_bytes()).collect();
+        B64.encode(bytes)
+    };
+    for i in 0..10 {
+        let r = post_json_rpc(
+            &rpc_base,
+            9110 + i,
+            "openhuman.meet_agent_push_listen_pcm",
+            json!({ "request_id": request_id, "pcm_base64": loud_b64 }),
+        )
+        .await;
+        let body = assert_no_jsonrpc_error(&r, "push_listen_pcm loud");
+        let body = body.get("result").unwrap_or(body);
+        assert_eq!(
+            body.get("turn_started"),
+            Some(&json!(false)),
+            "VAD must not fire while still hearing speech"
+        );
+    }
+
+    // 3) Push silent frames until turn_started flips. With
+    //    VAD_HANGOVER_FRAMES=6 the turn should fire within at most
+    //    ~7 silent pushes (allow 12 for slop).
+    let silent_frame = vec![0i16; 1600];
+    let silent_b64 = {
+        let bytes: Vec<u8> = silent_frame.iter().flat_map(|s| s.to_le_bytes()).collect();
+        B64.encode(bytes)
+    };
+    let mut turn_fired = false;
+    for i in 0..12 {
+        let r = post_json_rpc(
+            &rpc_base,
+            9130 + i,
+            "openhuman.meet_agent_push_listen_pcm",
+            json!({ "request_id": request_id, "pcm_base64": silent_b64 }),
+        )
+        .await;
+        let body = assert_no_jsonrpc_error(&r, "push_listen_pcm silent");
+        let body = body.get("result").unwrap_or(body);
+        if body.get("turn_started") == Some(&json!(true)) {
+            turn_fired = true;
+            break;
+        }
+    }
+    assert!(turn_fired, "VAD silence run failed to close utterance");
+
+    // 4) Give the spawned brain turn a chance to finish, then poll for
+    //    synthesized PCM. The stub TTS produces 200 ms of 440 Hz tone
+    //    which encodes to ~6.4 KB of base64.
+    let mut got_audio = false;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let r = post_json_rpc(
+            &rpc_base,
+            9150,
+            "openhuman.meet_agent_poll_speech",
+            json!({ "request_id": request_id }),
+        )
+        .await;
+        let body = assert_no_jsonrpc_error(&r, "poll_speech ok");
+        let body = body.get("result").unwrap_or(body);
+        let b64 = body
+            .get("pcm_base64")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if !b64.is_empty() {
+            got_audio = true;
+            assert!(
+                b64.len() > 1000,
+                "stub TTS should produce a multi-KB base64 payload"
+            );
+            break;
+        }
+    }
+    assert!(got_audio, "expected synthesized audio after VAD-fired turn");
+
+    // 5) stop_session returns counters. listened_seconds should be
+    //    > 0 (we pushed >1s of audio); turn_count should be exactly 1.
+    let stop = post_json_rpc(
+        &rpc_base,
+        9160,
+        "openhuman.meet_agent_stop_session",
+        json!({ "request_id": request_id }),
+    )
+    .await;
+    let stop_result = assert_no_jsonrpc_error(&stop, "stop_session ok");
+    let stop_body = stop_result.get("result").unwrap_or(stop_result);
+    assert_eq!(stop_body.get("ok"), Some(&json!(true)));
+    let listened = stop_body
+        .get("listened_seconds")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    assert!(listened > 1.0, "expected >1s listened, got {listened:.2}");
+    let turns = stop_body
+        .get("turn_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    assert_eq!(turns, 1, "expected exactly one brain turn");
+
+    // 6) Stopping a non-existent session is an error (not silent).
+    let bogus = post_json_rpc(
+        &rpc_base,
+        9161,
+        "openhuman.meet_agent_stop_session",
+        json!({ "request_id": "never-started" }),
+    )
+    .await;
+    assert_jsonrpc_error(&bogus, "stop_session unknown");
+
+    rpc_join.abort();
+}
