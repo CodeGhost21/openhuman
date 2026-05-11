@@ -4415,6 +4415,132 @@ async fn json_rpc_meet_agent_session_lifecycle() {
     rpc_join.abort();
 }
 
+/// Regression test for issue #1372 — "Meet agent joins but does not respond
+/// when spoken to."
+///
+/// Walks the caption-based wake-word path end to end over JSON-RPC:
+///   start_session → push_caption("hey openhuman") → poll_speech
+///   (expects non-empty PCM — the WAKE_ONLY_ACK greeting) → stop_session.
+///
+/// The pre-fix behavior was: a bare wake utterance produced
+/// `take_pending_prompt() == None`, `run_caption_turn` returned `Ok(false)`,
+/// and the agent went silent — matching the user-reported repro in
+/// #1372 ("agent looks connected but is unusable for live meeting
+/// interaction"). The fix makes the wake-only branch speak the greeting
+/// ack via TTS so the speaker hears engagement.
+///
+/// This test stays network-free: the wake-only branch short-circuits
+/// before `llm_meeting` is called, so no backend session token is
+/// required. It pins the entire RPC surface a caption-driven UI relies
+/// on (push_caption → outbound PCM) instead of just the brain unit.
+#[tokio::test]
+async fn json_rpc_meet_agent_caption_wake_responds_1372() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let request_id = "e2e-meet-agent-1372";
+
+    // 1) start_session.
+    let start = post_json_rpc(
+        &rpc_base,
+        9201,
+        "openhuman.meet_agent_start_session",
+        json!({ "request_id": request_id, "sample_rate_hz": 16_000 }),
+    )
+    .await;
+    let start_result = assert_no_jsonrpc_error(&start, "start_session ok");
+    let start_body = start_result.get("result").unwrap_or(start_result);
+    assert_eq!(start_body.get("ok"), Some(&json!(true)));
+
+    // 2) push_caption with a bare wake utterance. This is the exact
+    //    shape the page-side caption-DOM bridge sends when a speaker
+    //    says "hey openhuman" with no follow-up — the repro path in
+    //    #1372. We expect turn_started=true so the brain dispatches.
+    let push = post_json_rpc(
+        &rpc_base,
+        9202,
+        "openhuman.meet_agent_push_caption",
+        json!({
+            "request_id": request_id,
+            "speaker": "Alice",
+            "text": "hey openhuman",
+            "ts_ms": 1,
+        }),
+    )
+    .await;
+    let push_result = assert_no_jsonrpc_error(&push, "push_caption ok");
+    let push_body = push_result.get("result").unwrap_or(push_result);
+    assert_eq!(push_body.get("ok"), Some(&json!(true)));
+    assert_eq!(
+        push_body.get("turn_started"),
+        Some(&json!(true)),
+        "bare wake caption must dispatch a brain turn — #1372"
+    );
+
+    // 3) Poll for synthesized PCM. The brain delays
+    //    CAPTION_TURN_DELAY_MS=1500ms before reading the prompt, then
+    //    synthesizes the greeting ack. Allow up to ~5s.
+    let mut got_audio = false;
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let r = post_json_rpc(
+            &rpc_base,
+            9203,
+            "openhuman.meet_agent_poll_speech",
+            json!({ "request_id": request_id }),
+        )
+        .await;
+        let body = assert_no_jsonrpc_error(&r, "poll_speech ok");
+        let body = body.get("result").unwrap_or(body);
+        let b64 = body
+            .get("pcm_base64")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if !b64.is_empty() {
+            got_audio = true;
+            assert!(
+                b64.len() > 1000,
+                "wake-only ack should produce a multi-KB PCM payload"
+            );
+            break;
+        }
+    }
+    assert!(
+        got_audio,
+        "expected synthesized greeting ack after bare wake caption — silence here = #1372 regression"
+    );
+
+    // 4) stop_session — counters confirm the turn ran.
+    let stop = post_json_rpc(
+        &rpc_base,
+        9204,
+        "openhuman.meet_agent_stop_session",
+        json!({ "request_id": request_id }),
+    )
+    .await;
+    let stop_result = assert_no_jsonrpc_error(&stop, "stop_session ok");
+    let stop_body = stop_result.get("result").unwrap_or(stop_result);
+    assert_eq!(stop_body.get("ok"), Some(&json!(true)));
+    let turns = stop_body
+        .get("turn_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    assert_eq!(turns, 1, "wake-only caption must produce exactly one turn");
+
+    rpc_join.abort();
+}
+
 /// End-to-end coverage for the WhatsApp agent tool wrappers shipped in
 /// issue #1341. Verifies that:
 ///

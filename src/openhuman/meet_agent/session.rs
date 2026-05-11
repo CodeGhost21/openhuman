@@ -147,15 +147,11 @@ impl MeetAgentSession {
         // and the transcript log; the user's punctuation isn't load-
         // bearing for note-taking.
         let normalized = normalize_for_wake(text);
-        let wake_idx = normalized
-            .find("hey openhuman")
-            .or_else(|| normalized.find("hey open human"));
-        if let Some(idx) = wake_idx {
-            let after = if normalized[idx..].starts_with("hey openhuman") {
-                idx + "hey openhuman".len()
-            } else {
-                idx + "hey open human".len()
-            };
+        let variants = wake_phrase_variants(relaxed_wake_enabled());
+        let wake_match = variants
+            .iter()
+            .find_map(|v| normalized.find(v).map(|idx| (idx, idx + v.len())));
+        if let Some((_idx, after)) = wake_match {
             let tail = normalized.get(after..).unwrap_or("").trim().to_string();
             self.pending_prompt = tail;
             self.wake_active = true;
@@ -304,6 +300,65 @@ fn normalize_for_wake(text: &str) -> String {
         }
     }
     out.trim_end().to_string()
+}
+
+/// Wake-phrase variants matched against the normalized caption.
+///
+/// `relaxed=false` is the production set: just "hey openhuman" and
+/// "hey open human" (the brand split Meet's STT sometimes produces).
+///
+/// `relaxed=true` adds the most common STT misreads of "hey" we've
+/// observed in real Google Meet captions ("they openhuman", "eh
+/// openhuman", "hi openhuman", etc.). It is **TEMPORARY** — a manual
+/// testing aid for issue #1372 so the agent can be exercised without
+/// fighting STT. Remove the relaxed branch (and `MEET_AGENT_RELAXED_WAKE`
+/// env gate below) once we replace this substring matcher with a real
+/// STT-aware wake detector. Grep tag: TODO(#1372-relaxed-wake).
+fn wake_phrase_variants(relaxed: bool) -> &'static [&'static str] {
+    const BASE: &[&str] = &["hey openhuman", "hey open human"];
+    // TODO(#1372-relaxed-wake): drop this list once a proper wake-word
+    // detector lands. The order is "most likely first" — substring
+    // match short-circuits on the first hit.
+    const RELAXED: &[&str] = &[
+        "hey openhuman",
+        "hey open human",
+        "they openhuman",
+        "they open human",
+        "hi openhuman",
+        "hi open human",
+        "eh openhuman",
+        "eh open human",
+        "hay openhuman",
+        "hay open human",
+        "say openhuman",
+        "say open human",
+        "ay openhuman",
+        "ay open human",
+        "ey openhuman",
+        "ey open human",
+    ];
+    if relaxed {
+        RELAXED
+    } else {
+        BASE
+    }
+}
+
+/// Whether `MEET_AGENT_RELAXED_WAKE` env var opts into the relaxed
+/// wake-phrase variants (see [`wake_phrase_variants`]). Accepts any
+/// non-empty value except `"0"` / `"false"` (case-insensitive). Read
+/// per-caption so a developer can flip it without restarting core.
+///
+/// TODO(#1372-relaxed-wake): remove together with the relaxed variant
+/// list once we have a real STT-aware wake detector.
+fn relaxed_wake_enabled() -> bool {
+    std::env::var("MEET_AGENT_RELAXED_WAKE")
+        .ok()
+        .map(|v| {
+            let t = v.trim();
+            !t.is_empty() && t != "0" && !t.eq_ignore_ascii_case("false")
+        })
+        .unwrap_or(false)
 }
 
 /// Process-wide session registry. Sessions are keyed by `request_id`.
@@ -462,6 +517,74 @@ mod tests {
             prompt.contains("take notes about the launch"),
             "got prompt: {prompt}"
         );
+    }
+
+    /// TODO(#1372-relaxed-wake): the next three tests pin the temporary
+    /// STT-tolerance toggle. Delete them together with the relaxed
+    /// branch in `wake_phrase_variants` / `relaxed_wake_enabled` once a
+    /// real wake-word detector replaces the substring matcher.
+    #[test]
+    fn wake_phrase_variants_base_is_strict() {
+        let base = wake_phrase_variants(false);
+        assert_eq!(base, &["hey openhuman", "hey open human"]);
+    }
+
+    #[test]
+    fn wake_phrase_variants_relaxed_covers_observed_stt_misreads() {
+        let relaxed = wake_phrase_variants(true);
+        // The relaxed set must be a strict superset of the base set so
+        // production captions still fire when the toggle is on.
+        for canonical in ["hey openhuman", "hey open human"] {
+            assert!(
+                relaxed.contains(&canonical),
+                "relaxed set must include canonical phrase {canonical:?}"
+            );
+        }
+        // STT misreads observed in real Meet captions during #1372
+        // testing (see PR thread). Each one must be matchable.
+        for misread in [
+            "they openhuman",
+            "hi openhuman",
+            "eh openhuman",
+            "hay openhuman",
+        ] {
+            assert!(
+                relaxed.contains(&misread),
+                "relaxed set must include STT misread {misread:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn note_caption_matcher_uses_relaxed_variants_directly() {
+        // Pick a misread that is **not** a superstring of "hey
+        // openhuman" so this test demonstrates real additive coverage.
+        // (Note: "they openhuman" already matches the base set because
+        // "hey openhuman" is a substring of it — so it's not a useful
+        // discriminator here. "hi openhuman" is.)
+        //
+        // Drive the matcher manually with the relaxed list so the
+        // assertion does not depend on process-global env state (which
+        // would race with parallel tests).
+        let normalized = normalize_for_wake("Hi openhuman, take notes");
+        assert_eq!(normalized, "hi openhuman take notes");
+
+        // Base set must NOT match — production stays strict when the
+        // toggle is off.
+        let base = wake_phrase_variants(false);
+        assert!(
+            base.iter().all(|v| !normalized.contains(v)),
+            "base set must not match 'hi openhuman'"
+        );
+
+        // Relaxed set must match and yield the trailing prompt.
+        let relaxed = wake_phrase_variants(true);
+        let hit = relaxed
+            .iter()
+            .find_map(|v| normalized.find(v).map(|i| (v, i + v.len())));
+        let (matched, after) = hit.expect("relaxed matcher must fire on 'hi openhuman'");
+        assert_eq!(*matched, "hi openhuman");
+        assert_eq!(normalized[after..].trim(), "take notes");
     }
 
     #[test]

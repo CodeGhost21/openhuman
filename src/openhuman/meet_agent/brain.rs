@@ -77,40 +77,87 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
     // a chance to assemble before we drain the prompt.
     tokio::time::sleep(std::time::Duration::from_millis(CAPTION_TURN_DELAY_MS)).await;
 
-    let (prompt, history) = match registry().with_session(request_id, |s| {
+    let (raw_prompt, history) = match registry().with_session(request_id, |s| {
         let prompt = s.take_pending_prompt();
         let history = recent_dialog_history(s.events(), CONTEXT_EVENT_WINDOW);
         (prompt, history)
     })? {
-        (Some(p), h) => (p, h),
-        (None, _) => return Ok(false),
+        (Some(p), h) => (Some(p), h),
+        (None, h) => (None, h),
+    };
+    // Wake-only utterance ("hey openhuman" with no follow-up) still
+    // needs an audible response so the speaker knows the agent heard
+    // them. We mark the prompt as empty and let the LLM stage
+    // short-circuit to a greeting ack rather than going silent.
+    let (prompt, prompt_was_empty) = match raw_prompt {
+        Some(p) if !p.trim().is_empty() => (p, false),
+        _ => (String::new(), true),
     };
     log::info!(
-        "[meet-agent] caption turn start request_id={request_id} prompt_chars={} history_msgs={}",
+        "[meet-agent] caption turn start request_id={request_id} prompt_chars={} history_msgs={} wake_only={prompt_was_empty}",
         prompt.chars().count(),
         history.len(),
     );
 
-    // Real LLM call. The model gets the rolling caption history plus
-    // the user's direct address and decides whether to respond, what
-    // to say, and how concise to be. It can also return an empty
-    // string when it concludes the message wasn't actually directed
-    // at it (false-positive wake word, side conversation).
-    let reply_text = match llm_meeting(&prompt, &history).await {
-        Ok(text) => text,
-        Err(err) => {
-            log::warn!("[meet-agent] caption-turn LLM failed request_id={request_id} err={err}");
-            let _ = registry().with_session(request_id, |s| {
-                s.record_event(
-                    SessionEventKind::Note,
-                    format!("LLM failure (using ack): {err}"),
+    // Decide what to say. Three branches, all of which MUST produce a
+    // non-empty `reply_text` so the agent never silently no-ops after a
+    // wake fire — silence is the user-visible bug from issue #1372.
+    //
+    //   1. Wake-only ("hey openhuman" alone): skip the LLM, greet.
+    //   2. LLM call fails: ack from `pick_ack_phrase`.
+    //   3. LLM call succeeds with empty content: ack so the user
+    //      hears engagement instead of a hung mic.
+    let reply_text = if prompt_was_empty {
+        log::info!("[meet-agent] caption turn wake-only request_id={request_id} — greeting ack");
+        let _ = registry().with_session(request_id, |s| {
+            s.record_event(
+                SessionEventKind::Note,
+                "wake-only utterance — greeting ack".to_string(),
+            );
+        });
+        WAKE_ONLY_ACK.to_string()
+    } else {
+        match llm_meeting(&prompt, &history).await {
+            Ok(text) if !text.trim().is_empty() => text,
+            Ok(_) => {
+                // Model intentionally returned nothing despite the
+                // updated system prompt that tells it to always reply.
+                // Surface as a Note + log so the silent path is
+                // visible, then speak a short ack so the user hears
+                // engagement.
+                log::warn!(
+                    "[meet-agent] caption-turn LLM returned empty request_id={request_id} — falling back to ack"
                 );
-            });
-            pick_ack_phrase(&prompt).to_string()
+                let _ = registry().with_session(request_id, |s| {
+                    s.record_event(
+                        SessionEventKind::Note,
+                        "LLM returned empty (using ack)".to_string(),
+                    );
+                });
+                pick_ack_phrase(&prompt).to_string()
+            }
+            Err(err) => {
+                log::warn!(
+                    "[meet-agent] caption-turn LLM failed request_id={request_id} err={err}"
+                );
+                let _ = registry().with_session(request_id, |s| {
+                    s.record_event(
+                        SessionEventKind::Note,
+                        format!("LLM failure (using ack): {err}"),
+                    );
+                });
+                pick_ack_phrase(&prompt).to_string()
+            }
         }
     };
 
     let synthesized = if reply_text.trim().is_empty() {
+        // Should not happen — every branch above produces a non-empty
+        // reply — but guard so a future change can't reintroduce the
+        // silent-failure mode.
+        log::warn!(
+            "[meet-agent] caption-turn produced empty reply_text request_id={request_id} — skipping TTS"
+        );
         Vec::new()
     } else {
         match tts(&reply_text).await {
@@ -131,7 +178,15 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
     };
 
     registry().with_session(request_id, |s| {
-        s.record_event(SessionEventKind::Heard, prompt.clone());
+        // Record the user-side text for rolling history. For wake-only
+        // utterances we record a placeholder so the assistant's reply
+        // still has a paired user turn in the history window.
+        let heard_text = if prompt_was_empty {
+            "(wake word, no follow-up)".to_string()
+        } else {
+            prompt.clone()
+        };
+        s.record_event(SessionEventKind::Heard, heard_text);
         if !reply_text.is_empty() {
             s.record_event(SessionEventKind::Spoke, reply_text.clone());
             if !synthesized.is_empty() {
@@ -158,6 +213,11 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
 /// 2-3 caption fragments can join up; short enough that the user
 /// doesn't experience awkward silence after they stop talking.
 const CAPTION_TURN_DELAY_MS: u64 = 1_500;
+
+/// Spoken reply when the user fired the wake word but said nothing
+/// afterwards. Brief and friendly so they immediately know the agent
+/// is listening.
+const WAKE_ONLY_ACK: &str = "I'm here — what would you like?";
 
 /// Canned acknowledgements the agent speaks out loud after capturing
 /// a note. Short, varied so consecutive notes don't sound robotic.
@@ -297,33 +357,33 @@ async fn stt(samples: &[i16]) -> Result<String, String> {
     Ok(text)
 }
 
-/// System prompt for the live meeting agent. Pushes the model toward
-/// (a) recognising whether the latest utterance is genuinely directed
-/// at it (intent classification — emit empty string when not), and
-/// (b) responding conversationally and concisely when it is.
+/// System prompt for the live meeting agent. The wake-word gate has
+/// already decided the message is for us by the time this runs (see
+/// `session::note_caption`), so the model's job is *only* to respond
+/// well — not to re-decide whether to engage. Asking the model to
+/// re-detect addressing causes silent drops, because the wake phrase
+/// has been stripped from the prompt before the LLM sees it.
 const MEETING_SYSTEM_PROMPT: &str = "\
 You are OpenHuman, an AI assistant joining a live Google Meet call as a participant. \
 The meeting transcript is provided as prior turns where `user` lines are captions \
 spoken by humans on the call (sometimes prefixed with their name) and `assistant` \
-lines are things you previously said out loud. The latest `user` message is the \
-utterance you are deciding how to respond to.\n\
+lines are things you previously said out loud.\n\
 \n\
-Decide first: was this latest utterance actually directed at you? Strong signals: \
-the speaker addresses you by name (\"OpenHuman\", \"hey openhuman\"), asks a direct \
-question, or asks you to do something (note this, summarise, look up, remember, \
-remind, draft). Weak signals (do NOT respond): chit-chat between humans, \
-side conversation, your name appearing inside a longer thought aimed at someone \
-else, ambient transcription noise.\n\
+The latest `user` message is a request directly addressed to you. The user said a \
+wake phrase (\"hey OpenHuman\") that has already been stripped, so what you receive \
+is the body of their request. Always respond — do not return an empty string. \
+Even short or ambiguous prompts deserve a brief acknowledgement so the speaker \
+hears that you're engaged.\n\
 \n\
-If it is NOT directed at you, output exactly the empty string. Stay silent. \
-\n\
-If it IS directed at you:\n\
-  • Reply in 1–2 spoken sentences. Conversational, warm, direct. No filler.\n\
+How to reply:\n\
+  • 1–2 spoken sentences. Conversational, warm, direct. No filler.\n\
   • Pronounce naturally — write the way a person speaks, not the way they type. \
 No markdown, no bullet lists, no code blocks, no emoji.\n\
+  • If the prompt is empty, very short, or unclear, give a brief friendly \
+acknowledgement (\"I'm here.\", \"Listening — what would you like?\") so the \
+caller knows you heard them.\n\
   • For dictation / note requests (\"remember…\", \"action item…\", \"follow up on…\"), \
-the note is already captured in the transcript log, so just acknowledge briefly \
-(\"Got it.\", \"Adding that.\") — don't read the note back.\n\
+acknowledge briefly (\"Got it.\", \"Adding that.\") — don't read the note back.\n\
   • For questions, answer directly with what you know; if you don't know, say so \
 in one sentence rather than guessing.\n\
   • Never repeat verbatim what was said. Never describe what you're about to do — \
@@ -651,5 +711,121 @@ mod tests {
     fn strip_for_speech_preserves_empty_when_input_empty() {
         assert_eq!(strip_for_speech(""), "");
         assert_eq!(strip_for_speech("   \n  "), "");
+    }
+
+    #[test]
+    fn pick_ack_phrase_returns_non_empty_for_real_prompts() {
+        // Issue #1372 regression: when the LLM returns nothing after a
+        // wake-word fire we fall back to `pick_ack_phrase` and rely on
+        // it producing audible text. Empty returns reintroduce silence.
+        for prompt in ["remember the launch", "what time is it", "h"] {
+            let ack = pick_ack_phrase(prompt);
+            assert!(
+                !ack.is_empty(),
+                "pick_ack_phrase({prompt:?}) returned empty"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn run_caption_turn_responds_to_wake_only_utterance() {
+        // Issue #1372: "hey openhuman" with no follow-up used to drop
+        // out via `take_pending_prompt` returning None and the brain
+        // returning Ok(false). Now we must produce an audible greeting.
+        let request_id = "brain-wake-only";
+        registry().start(request_id, 16_000).unwrap();
+        registry()
+            .with_session(request_id, |s| {
+                let fired = s.note_caption("Alice", "hey openhuman", 1);
+                assert!(fired, "wake word should fire");
+            })
+            .unwrap();
+
+        let did_run = run_caption_turn(request_id).await.unwrap();
+        assert!(did_run, "wake-only turn must produce a response");
+
+        registry()
+            .with_session(request_id, |s| {
+                let kinds: Vec<_> = s.events().iter().map(|e| format!("{:?}", e.kind)).collect();
+                assert!(
+                    kinds.contains(&"Spoke".to_string()),
+                    "expected a Spoke event, got events {kinds:?}"
+                );
+                assert_eq!(s.turn_count, 1);
+                assert!(
+                    s.spoken_seconds() > 0.0,
+                    "expected outbound PCM to be enqueued for the greeting ack"
+                );
+            })
+            .unwrap();
+        let _ = registry().stop(request_id);
+    }
+
+    #[tokio::test]
+    async fn run_caption_turn_responds_with_ack_when_llm_unreachable() {
+        // Issue #1372: in test env there's no backend session token,
+        // so `llm_meeting` returns Err. The fix is to fall back to a
+        // canned ack so the agent never goes silent after a wake fire.
+        let request_id = "brain-llm-fail-ack";
+        registry().start(request_id, 16_000).unwrap();
+        registry()
+            .with_session(request_id, |s| {
+                let fired = s.note_caption("Alice", "hey openhuman remember the launch", 1);
+                assert!(fired);
+            })
+            .unwrap();
+
+        let did_run = run_caption_turn(request_id).await.unwrap();
+        assert!(did_run);
+
+        registry()
+            .with_session(request_id, |s| {
+                let spoke: Vec<_> = s
+                    .events()
+                    .iter()
+                    .filter(|e| matches!(e.kind, SessionEventKind::Spoke))
+                    .map(|e| e.text.clone())
+                    .collect();
+                assert_eq!(
+                    spoke.len(),
+                    1,
+                    "expected exactly one Spoke event, got {spoke:?}"
+                );
+                let reply = &spoke[0];
+                assert!(!reply.is_empty(), "Spoke reply must not be empty");
+                assert!(
+                    ACK_PHRASES.iter().any(|a| a == reply),
+                    "expected one of {ACK_PHRASES:?}, got {reply:?}"
+                );
+                assert!(
+                    s.spoken_seconds() > 0.0,
+                    "expected outbound PCM to be enqueued for the ack"
+                );
+            })
+            .unwrap();
+        let _ = registry().stop(request_id);
+    }
+
+    #[test]
+    fn meeting_system_prompt_does_not_instruct_silence() {
+        // Issue #1372 root cause: the prompt told the LLM to return an
+        // empty string when in doubt about addressing. Combined with
+        // the wake-phrase being stripped before the model saw it, this
+        // produced a silent agent. The replacement prompt must not
+        // instruct empty-string output.
+        let p = MEETING_SYSTEM_PROMPT.to_lowercase();
+        assert!(
+            !p.contains("output exactly the empty string"),
+            "system prompt regressed: still tells model to emit empty string"
+        );
+        assert!(
+            !p.contains("stay silent"),
+            "system prompt regressed: still tells model to stay silent"
+        );
+        // Positive: it must instruct the model to always respond.
+        assert!(
+            p.contains("always respond") || p.contains("do not return an empty"),
+            "system prompt should instruct the model to always respond"
+        );
     }
 }
