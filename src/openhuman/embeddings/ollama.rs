@@ -170,11 +170,20 @@ impl EmbeddingProvider for OllamaEmbedding {
                     "ollama embed request failed (is Ollama running at {}?): {e}",
                     self.base_url
                 );
-                crate::core::observability::report_error(
-                    message.as_str(),
-                    "embeddings",
-                    "ollama_embed",
-                    &[("model", self.model.as_str()), ("failure", "transport")],
+                // Transport failure (connection refused, DNS, timeout) almost
+                // always means the user simply doesn't have Ollama running
+                // locally — an expected environment state, not a bug. Log a
+                // warning but skip Sentry to avoid alerting on every user
+                // without Ollama installed. Non-2xx responses below still
+                // funnel through `report_error` because those indicate Ollama
+                // is up but something is wrong.
+                tracing::warn!(
+                    target: "embeddings.ollama",
+                    domain = "embeddings",
+                    operation = "ollama_embed",
+                    failure = "transport",
+                    model = %self.model,
+                    "[embeddings] {message}"
                 );
                 anyhow::anyhow!(message)
             })?;
