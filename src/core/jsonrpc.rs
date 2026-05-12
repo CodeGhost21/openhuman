@@ -69,7 +69,22 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
             // cannot help — we can neither retro-fix already-shipped
             // installs nor learn anything from the noise — so log at info
             // and skip the report.
-            if is_session_expired_error(&message) || is_param_validation_error(&message) {
+            //
+            // Logging asymmetry between the two skip paths is intentional:
+            // session-expired messages are a small set of fixed strings
+            // (no caller-supplied content), so the full text is safe to
+            // log. Param-validation messages embed caller-supplied param
+            // names and, for the `invalid params: …` shape, can carry
+            // deserialized values — log structurally with redacted body
+            // to keep PII out of the sink while preserving the method
+            // for grep / correlation.
+            if is_param_validation_error(&message) {
+                tracing::info!(
+                    method = %method,
+                    elapsed_ms = ms as u64,
+                    "[rpc] param-validation error (message redacted; skip-report)"
+                );
+            } else if is_session_expired_error(&message) {
                 tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
             } else {
                 crate::core::observability::report_error(
@@ -160,14 +175,30 @@ fn is_session_expired_error(msg: &str) -> bool {
 /// rather than the underlying handler.
 ///
 /// Three shapes, all emitted before the handler ever runs:
-///   * `"unknown param '<key>' for <ns>.<fn>"`       (extra field, see `all::validate_params`)
-///   * `"missing required param '<key>': <comment>"` (omitted required field)
-///   * `"invalid params: expected object or null, got <type>"` (wrong params shape)
+///   * `"unknown param '<key>' for <ns>.<fn>"`       — `all::validate_params` (extra field)
+///   * `"missing required param '<key>': <comment>"` — `all::validate_params` (omitted required field)
+///   * `"invalid params: expected object or null, got <type>"` — `params_to_object` (wrong params shape)
 ///
-/// These only fire when caller and server schemas drift — either a frontend on a
-/// different release than the running core, or a buggy external client.
-/// Reporting them to Sentry produces unactionable noise (we cannot patch an
-/// already-shipped install, and the message itself already names the bad field).
+/// These only fire when caller and server schemas drift at the transport layer
+/// — either a frontend on a different release than the running core, or a buggy
+/// external client. Reporting them to Sentry produces unactionable noise (we
+/// cannot patch an already-shipped install, and the message itself already
+/// names the bad field).
+///
+/// Note: domain-level validation errors (e.g. type/format checks emitted *inside*
+/// a controller's `rpc.rs` handler such as `"param 'x' must be a UUID"`) are
+/// intentionally *not* matched here — only the three shapes emitted by the
+/// transport-layer validators before the handler runs. Longer-term a typed
+/// `RpcError::ParamValidation` variant would remove the string-matching
+/// brittleness; the unit tests in `jsonrpc_tests.rs` lock the exact prefixes
+/// against the emit sites in `all::validate_params` and `params_to_object`.
+///
+/// `starts_with` (not `.contains()`) is deliberate: validator errors are always
+/// emitted as the full message body, so an anchored match avoids false positives
+/// from upstream handler text that happens to mention `"unknown param"`. The
+/// session-expired predicate uses `.contains()` because session-expired markers
+/// can appear mid-message — flip these to match and the test
+/// `is_param_validation_error_does_not_match_unrelated_errors` will break.
 fn is_param_validation_error(msg: &str) -> bool {
     msg.starts_with("unknown param '")
         || msg.starts_with("missing required param '")
