@@ -59,15 +59,25 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
             // Session-expired bubbles up as an "error" but is an expected
             // boundary condition (auth handler clears the local token and the
             // UI re-auths). Don't spam Sentry with it.
-            if !is_session_expired_error(&message) {
+            //
+            // Param-validation failures ("unknown param 'x' for ns.fn",
+            // "missing required param 'x'", "invalid params: …") are also
+            // pure boundary mismatches: either the caller is a frontend on a
+            // different release than the running core (OPENHUMAN-TAURI-20:
+            // v0.53.22 UI shipped `api_key` before the matching schema input
+            // landed in #1467) or it is straight client-bug input. Sentry
+            // cannot help — we can neither retro-fix already-shipped
+            // installs nor learn anything from the noise — so log at info
+            // and skip the report.
+            if is_session_expired_error(&message) || is_param_validation_error(&message) {
+                tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
+            } else {
                 crate::core::observability::report_error(
                     message.as_str(),
                     "rpc",
                     "invoke_method",
                     &[("method", method.as_str()), ("elapsed_ms", &ms.to_string())],
                 );
-            } else {
-                tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
             }
             (
                 StatusCode::OK,
@@ -144,6 +154,24 @@ fn is_session_expired_error(msg: &str) -> bool {
         || lower.contains("invalid token")
         || lower.contains("no backend session token")
         || msg.contains("SESSION_EXPIRED")
+}
+
+/// Returns `true` when the error message comes from JSON-RPC params validation
+/// rather than the underlying handler.
+///
+/// Three shapes, all emitted before the handler ever runs:
+///   * `"unknown param '<key>' for <ns>.<fn>"`       (extra field, see `all::validate_params`)
+///   * `"missing required param '<key>': <comment>"` (omitted required field)
+///   * `"invalid params: expected object or null, got <type>"` (wrong params shape)
+///
+/// These only fire when caller and server schemas drift — either a frontend on a
+/// different release than the running core, or a buggy external client.
+/// Reporting them to Sentry produces unactionable noise (we cannot patch an
+/// already-shipped install, and the message itself already names the bad field).
+fn is_param_validation_error(msg: &str) -> bool {
+    msg.starts_with("unknown param '")
+        || msg.starts_with("missing required param '")
+        || msg.starts_with("invalid params: ")
 }
 
 /// Internal method invocation logic.
