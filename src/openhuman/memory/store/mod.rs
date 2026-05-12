@@ -28,7 +28,7 @@ pub use factories::{
     create_memory, create_memory_for_migration, create_memory_with_local_ai,
     create_memory_with_storage, create_memory_with_storage_and_routes,
     effective_embedding_settings, effective_embedding_settings_probed,
-    effective_memory_backend_name, probe_ollama_reachable,
+    effective_memory_backend_name,
 };
 pub use types::{
     GraphRelationRecord, MemoryItemKind, MemoryKvRecord, NamespaceDocumentInput,

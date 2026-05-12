@@ -46,40 +46,71 @@ fn report_ollama_health_gate_once(base_url: &str) -> bool {
     let message = format!(
         "ollama embeddings opted-in but daemon unreachable at {base_url}; falling back to cloud embeddings for this session"
     );
+    // Tags are indexed and grouped on; keep them low-cardinality and free of
+    // credentials. Full URL stays in the message body for diagnostics.
+    let host_tag = redact_ollama_host(base_url);
     crate::core::observability::report_error(
         message.as_str(),
         "memory",
         "ollama_health_gate",
-        &[("base_url", base_url), ("fallback", "cloud")],
+        &[("ollama_host", host_tag), ("fallback", "cloud")],
     );
     true
 }
 
-/// Effective Ollama base URL, honouring `OPENHUMAN_OLLAMA_BASE_URL` /
-/// `OLLAMA_HOST` env vars the way the lifecycle does. Falls back to
-/// `http://localhost:11434`.
+/// Resets the once-per-process Sentry latch. Test-only — any test that
+/// exercises a fallback path should call this first so it can't be flaked by
+/// suite ordering (an earlier test that already tripped the latch).
+#[cfg(test)]
+fn reset_health_gate_for_test() {
+    OLLAMA_HEALTH_REPORTED.store(false, Ordering::Release);
+}
+
+/// Effective Ollama base URL.
+///
+/// Delegates to [`crate::openhuman::local_ai::ollama_base_url`] so the probe
+/// always agrees with the rest of the Ollama machinery on the daemon address.
+/// If a future change adds another env-var override or shifts precedence, the
+/// memory health-gate picks it up automatically.
 fn ollama_base_url_for_probe() -> String {
-    // Re-implement here rather than reaching into `local_ai::ollama_api`
-    // (which is `pub(crate)`). Keeping the lookup logic in sync with that
-    // helper is the only reason this lives in `factories.rs` — both points
-    // probe the same daemon, so they must agree on its address.
-    if let Ok(url) = std::env::var("OPENHUMAN_OLLAMA_BASE_URL") {
-        let trimmed = url.trim();
-        if !trimmed.is_empty() {
-            return trimmed.trim_end_matches('/').to_string();
-        }
+    crate::openhuman::local_ai::ollama_base_url()
+}
+
+/// Canonical `(provider, model, dimensions)` tuple used everywhere the
+/// health-gate falls back from Ollama → cloud. Centralised so both the async
+/// and sync gate sites agree if the cloud defaults ever change.
+fn cloud_embedding_fallback() -> (String, String, usize) {
+    (
+        "cloud".to_string(),
+        DEFAULT_CLOUD_EMBEDDING_MODEL.to_string(),
+        DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
+    )
+}
+
+/// Extracts a low-cardinality `host[:port]` tag from `base_url` for Sentry.
+///
+/// Sentry tags are indexed and should not carry secrets or per-instance noise:
+/// `http://user:token@host:11434/api/tags?key=v` collapses to `host:11434`.
+/// Falls back to `"unknown"` if parsing yields an empty string so we never
+/// emit an empty tag value.
+fn redact_ollama_host(base_url: &str) -> &str {
+    let after_scheme = base_url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(base_url);
+    let after_userinfo = after_scheme
+        .rsplit_once('@')
+        .map_or(after_scheme, |(_, h)| h);
+    let host = after_userinfo
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim();
+    if host.is_empty() {
+        "unknown"
+    } else {
+        host
     }
-    if let Ok(host) = std::env::var("OLLAMA_HOST") {
-        let trimmed = host.trim().trim_end_matches('/');
-        if !trimmed.is_empty() {
-            return if trimmed.contains("://") {
-                trimmed.to_string()
-            } else {
-                format!("http://{trimmed}")
-            };
-        }
-    }
-    "http://localhost:11434".to_string()
 }
 
 /// Probe whether an Ollama daemon is reachable at `base_url`.
@@ -92,7 +123,11 @@ fn ollama_base_url_for_probe() -> String {
 /// Kept deliberately small and side-effect-free so it can be called from
 /// the memory factory's startup path without pulling in the full
 /// `local_ai::service::ollama_admin` machinery.
-pub async fn probe_ollama_reachable(base_url: &str) -> bool {
+///
+/// Scoped `pub(crate)` to match `local_ai::ollama_base_url`; the only callers
+/// are the factory itself and its sibling tests. Stable external API for the
+/// health-gate is [`effective_embedding_settings_probed`].
+pub(crate) async fn probe_ollama_reachable(base_url: &str) -> bool {
     let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
@@ -192,11 +227,7 @@ pub async fn effective_embedding_settings_probed(
     // doesn't recreate the per-embed flood we're fixing. Then fall back to
     // cloud so the user has a working app.
     report_ollama_health_gate_once(&base_url);
-    (
-        "cloud".to_string(),
-        DEFAULT_CLOUD_EMBEDDING_MODEL.to_string(),
-        DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
-    )
+    cloud_embedding_fallback()
 }
 
 /// Returns the effective name of the memory backend being used.
@@ -335,11 +366,7 @@ fn create_memory_full(
             intended
         } else {
             report_ollama_health_gate_once(&base_url);
-            (
-                "cloud".to_string(),
-                DEFAULT_CLOUD_EMBEDDING_MODEL.to_string(),
-                DEFAULT_CLOUD_EMBEDDING_DIMENSIONS,
-            )
+            cloud_embedding_fallback()
         }
     } else {
         intended
@@ -500,6 +527,9 @@ mod tests {
     #[tokio::test]
     async fn probed_settings_fall_back_to_cloud_when_ollama_unreachable() {
         let _env = EnvGuard::set("http://127.0.0.1:1");
+        // Independent of suite ordering: an earlier fallback test must not
+        // leave the latch tripped and silently turn this assertion green.
+        reset_health_gate_for_test();
 
         let mem = MemoryConfig::default();
         let local_ai = local_ai_with_embeddings_on();
@@ -530,16 +560,44 @@ mod tests {
         assert_eq!(dims, DEFAULT_OLLAMA_DIMENSIONS);
     }
 
+    #[test]
+    fn redact_ollama_host_strips_scheme_userinfo_path_and_query() {
+        // Strips scheme.
+        assert_eq!(
+            redact_ollama_host("http://localhost:11434"),
+            "localhost:11434"
+        );
+        // Strips userinfo (would be the credential leak vector).
+        assert_eq!(
+            redact_ollama_host("http://user:secret@10.0.0.1:11434"),
+            "10.0.0.1:11434"
+        );
+        // Strips path / query / fragment.
+        assert_eq!(
+            redact_ollama_host("https://host:11434/api/tags?key=v#frag"),
+            "host:11434"
+        );
+        // Scheme-less inputs survive (matches `local_ai::ollama_base_url`'s
+        // contract: it may or may not prepend `http://`).
+        assert_eq!(redact_ollama_host("host:1234"), "host:1234");
+        // Empty / malformed inputs fall back to a safe constant.
+        assert_eq!(redact_ollama_host(""), "unknown");
+    }
+
     /// First call to `report_ollama_health_gate_once` fires the report;
     /// subsequent calls in the same process must be suppressed. We can't
     /// observe the Sentry side effect directly here, but the boolean return
     /// value is the gate's contract — covers the once-per-process guarantee.
+    ///
+    /// Acquires `TEST_ENV_LOCK` to serialize with `probed_settings_*` tests
+    /// that also touch the latch; without that, parallel test execution can
+    /// reset the flag between this test's two `report_ollama_health_gate_once`
+    /// calls and turn the second one into a fresh "first" — flaking the
+    /// suppression assertion.
     #[test]
     fn ollama_health_gate_reports_at_most_once_per_process() {
-        // Reset the flag so this test is independent of suite ordering.
-        // SAFETY: AtomicBool::store is always safe; the comment is to flag
-        // that this test deliberately mutates module-static state.
-        OLLAMA_HEALTH_REPORTED.store(false, Ordering::Release);
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_health_gate_for_test();
 
         assert!(
             report_ollama_health_gate_once("http://127.0.0.1:1"),
