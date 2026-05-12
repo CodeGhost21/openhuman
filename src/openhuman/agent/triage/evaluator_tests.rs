@@ -104,6 +104,25 @@ fn classify_string_recognises_budget_exceeded_as_budget_exhausted() {
 }
 
 #[test]
+fn classify_string_does_not_match_budget_phrases_across_word_boundaries() {
+    // Regression: a substring-based check would fire BudgetExhausted
+    // on "stop updating" because the normalized text contains the
+    // substring "top up" — across the boundary between "stop" and
+    // "updating". Whole-word (token-window) matching prevents this.
+    for msg in [
+        "please stop updating the row",
+        "stop updating now",
+        "topup completed",
+    ] {
+        let err = classify_error(msg.to_string());
+        assert!(
+            matches!(err, ArmError::Fatal(_)),
+            "expected Fatal (no spurious BudgetExhausted) for {msg:?}"
+        );
+    }
+}
+
+#[test]
 fn classify_string_recognises_top_up_and_out_of_credits_as_budget_exhausted() {
     for msg in [
         "please top up your account",

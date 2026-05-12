@@ -230,8 +230,23 @@ pub async fn run_triage_with_arms(
         // No local arm available at all (runtime disabled, no model
         // configured) — the only honest outcome is a deferral so the
         // next tick retries the whole chain.
-        let reason = match cloud_budget_exhausted {
-            Some(err) => format!("cloud budget exhausted; local arm unavailable: {err}"),
+        //
+        // `reason` is part of `TriageOutcome::Deferred` and may be
+        // forwarded into telemetry / UI, so it must stay a stable,
+        // scrubbed string. Raw upstream error text goes to the debug
+        // log instead, where it is operator-visible but not surfaced.
+        let reason = match &cloud_budget_exhausted {
+            Some(err) => {
+                tracing::debug!(
+                    target: "[triage::evaluator]",
+                    source = %envelope.source.slug(),
+                    label = %envelope.display_label,
+                    external_id = %envelope.external_id,
+                    error = %err,
+                    "cloud budget exhausted; no local arm — full upstream error"
+                );
+                "cloud budget exhausted; local arm unavailable".to_string()
+            }
             None => "cloud retry exhausted; local arm unavailable".to_string(),
         };
         return Ok(TriageOutcome::Deferred {
@@ -252,16 +267,28 @@ pub async fn run_triage_with_arms(
             // Local also failed — defer rather than surface a hard
             // error. Today's "hard fail" is the wrong default for a
             // transient blocker per #1257.
-            let reason = match cloud_budget_exhausted {
-                Some(cloud_err) => {
-                    format!("cloud budget exhausted ({cloud_err}); local also failed: {err}")
-                }
-                None => format!("cloud + local both failed: {err}"),
+            //
+            // `reason` is part of the public Deferred outcome and may
+            // flow into telemetry / UI, so keep it scrubbed. Raw error
+            // text from cloud + local lives in the structured warn
+            // fields below — visible to operators, not callers.
+            let reason = match cloud_budget_exhausted.as_ref() {
+                Some(_) => "cloud budget exhausted; local arm also failed".to_string(),
+                None => "cloud retry exhausted; local arm also failed".to_string(),
             };
             tracing::warn!(
-                error = %reason,
+                target: "[triage::evaluator]",
+                source = %envelope.source.slug(),
+                label = %envelope.display_label,
+                external_id = %envelope.external_id,
+                local_error = %err,
+                cloud_error = cloud_budget_exhausted
+                    .as_ref()
+                    .map(|e| e.to_string())
+                    .unwrap_or_default(),
                 defer_ms = DEFER_WAKEUP_MS,
-                "[triage::evaluator] both arms failed; deferring"
+                reason = %reason,
+                "both arms failed; deferring"
             );
             Ok(TriageOutcome::Deferred {
                 defer_until_ms: now_ms().saturating_add(DEFER_WAKEUP_MS),
@@ -461,23 +488,35 @@ fn classify_error(message: String) -> ArmError {
 /// inline here so the triage evaluator doesn't take a cross-domain
 /// dependency on the web-channel module.
 fn is_inference_budget_exceeded(message: &str) -> bool {
+    // Normalize: lowercase, replace non-alphanumeric with spaces, then
+    // split into whitespace-separated tokens. This lets us do
+    // whole-word matching: a raw `contains("top up")` against the
+    // normalized text would also fire on "stop updating" (which
+    // contains the substring "top up" across word boundaries).
     let normalized: String = message
         .trim()
         .to_ascii_lowercase()
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
         .collect();
-    let normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
-    [
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    const NEEDLES: &[&str] = &[
         "budget exceeded",
         "budget exceed",
         "top up",
         "add credits",
         "out of credits",
         "no remaining credits",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
+    ];
+    NEEDLES.iter().any(|needle| {
+        let needle_tokens: Vec<&str> = needle.split_whitespace().collect();
+        if needle_tokens.is_empty() || words.len() < needle_tokens.len() {
+            return false;
+        }
+        words
+            .windows(needle_tokens.len())
+            .any(|window| window == needle_tokens.as_slice())
+    })
 }
 
 /// Heuristic for transient cloud failures the provider stack didn't
