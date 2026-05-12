@@ -174,6 +174,10 @@ pub async fn run_triage_with_arms(
         Err(ArmError::Fatal(err)) => return Err(err),
         Err(ArmError::BudgetExhausted(err)) => {
             tracing::warn!(
+                source = %envelope.source.slug(),
+                label = %envelope.display_label,
+                external_id = %envelope.external_id,
+                path = TriageResolutionPath::Cloud.as_str(),
                 error = %err,
                 "[triage::evaluator] cloud rejected for budget; \
                  skipping retry and falling back to local arm"
@@ -200,6 +204,10 @@ pub async fn run_triage_with_arms(
                 Err(ArmError::Fatal(err)) => return Err(err),
                 Err(ArmError::BudgetExhausted(err)) => {
                     tracing::warn!(
+                        source = %envelope.source.slug(),
+                        label = %envelope.display_label,
+                        external_id = %envelope.external_id,
+                        path = TriageResolutionPath::CloudAfterRetry.as_str(),
                         error = %err,
                         "[triage::evaluator] cloud rejected for budget on retry; \
                          falling back to local arm"
