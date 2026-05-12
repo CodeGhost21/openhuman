@@ -89,6 +89,40 @@ fn classify_string_treats_auth_failure_as_fatal() {
     );
 }
 
+#[test]
+fn classify_string_recognises_budget_exceeded_as_budget_exhausted() {
+    // Matches the real payload that fired OPENHUMAN-TAURI-X in Sentry.
+    let err = classify_error(
+        "OpenHuman API error (400 Bad Request): {\"success\":false,\
+         \"error\":\"Budget exceeded — add credits to continue\"}"
+            .to_string(),
+    );
+    assert!(
+        matches!(err, ArmError::BudgetExhausted(_)),
+        "budget-exceeded must classify as BudgetExhausted, not Fatal (which pages Sentry)"
+    );
+}
+
+#[test]
+fn classify_string_recognises_top_up_and_out_of_credits_as_budget_exhausted() {
+    for msg in [
+        "please top up your account",
+        "you are out of credits, add credits to continue",
+        "no remaining credits available",
+    ] {
+        let err = classify_error(msg.to_string());
+        assert!(
+            matches!(err, ArmError::BudgetExhausted(_)),
+            "expected BudgetExhausted for {msg:?}, got {err:?}",
+            err = match err {
+                ArmError::Retryable { .. } => "Retryable",
+                ArmError::Fatal(_) => "Fatal",
+                ArmError::BudgetExhausted(_) => "BudgetExhausted",
+            }
+        );
+    }
+}
+
 // ── Tiered fallback integration tests ───────────────────────────
 //
 // These drive `run_triage_with_arms` end-to-end through the agent
@@ -327,6 +361,91 @@ async fn fatal_cloud_error_short_circuits_without_local_attempt() {
         counter.load(Ordering::SeqCst),
         1,
         "fatal cloud error should not retry or fall back"
+    );
+}
+
+#[tokio::test]
+async fn cloud_budget_exhausted_skips_retry_and_falls_to_local() {
+    // Regression for OPENHUMAN-TAURI-X: when the cloud arm returns
+    // "Budget exceeded — add credits to continue" we must not retry
+    // the cloud arm (the second call would burn the same wall) and
+    // we must not surface the error as Fatal (that paged Sentry).
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            let n = counter.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                assert_eq!(req.provider_name, "stub-cloud", "first call must hit cloud");
+                Err("OpenHuman API error (400 Bad Request): \
+                     {\"success\":false,\"error\":\"Budget exceeded — add credits to continue\"}"
+                    .to_string())
+            } else {
+                // No second cloud call — should jump straight to local.
+                assert_eq!(
+                    req.provider_name, "stub-local",
+                    "budget-exhausted must skip cloud retry and dispatch to local"
+                );
+                Ok(AgentTurnResponse {
+                    text: VALID_JSON_REPLY.to_string(),
+                })
+            }
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms(cloud_arm(), Some(local_arm()), &envelope())
+        .await
+        .expect("budget-exhausted must not surface as Err");
+
+    let run = outcome.into_decision().expect("decision");
+    assert_eq!(run.resolution_path, TriageResolutionPath::LocalFallback);
+    assert!(run.used_local);
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "1 cloud (rejected for budget) + 1 local = 2 (no cloud retry)"
+    );
+}
+
+#[tokio::test]
+async fn cloud_budget_exhausted_without_local_returns_deferred_not_err() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |_req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Err(
+                "OpenHuman API error (400 Bad Request): Budget exceeded — add credits to continue"
+                    .to_string(),
+            )
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms(cloud_arm(), None, &envelope())
+        .await
+        .expect("budget-exhausted with no local must be Deferred, not Err");
+
+    match outcome {
+        TriageOutcome::Deferred { reason, .. } => {
+            assert!(
+                reason.to_lowercase().contains("budget"),
+                "deferral reason should name the budget cause: {reason}"
+            );
+        }
+        TriageOutcome::Decision(_) => panic!("expected Deferred, got Decision"),
+    }
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "no retry — budget would block the second cloud call too"
     );
 }
 

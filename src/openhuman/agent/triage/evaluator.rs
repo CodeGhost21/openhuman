@@ -163,10 +163,23 @@ pub async fn run_triage_with_arms(
     local: Option<ResolvedProvider>,
     envelope: &TriggerEnvelope,
 ) -> anyhow::Result<TriageOutcome> {
+    // Track whether the cloud arm bailed because of user budget so the
+    // eventual Deferred reason explains *why* we're sitting idle rather
+    // than the generic "both arms failed" copy.
+    let mut cloud_budget_exhausted: Option<anyhow::Error> = None;
+
     // ── Cloud arm ──────────────────────────────────────────────────
     match try_arm(&cloud, envelope, TriageResolutionPath::Cloud).await {
         Ok(run) => return Ok(TriageOutcome::Decision(run)),
         Err(ArmError::Fatal(err)) => return Err(err),
+        Err(ArmError::BudgetExhausted(err)) => {
+            tracing::warn!(
+                error = %err,
+                "[triage::evaluator] cloud rejected for budget; \
+                 skipping retry and falling back to local arm"
+            );
+            cloud_budget_exhausted = Some(err);
+        }
         Err(ArmError::Retryable { retry_after_ms, .. }) => {
             // Sleep before the cloud retry. Honour Retry-After when
             // present; otherwise use a short backoff so the second
@@ -185,6 +198,14 @@ pub async fn run_triage_with_arms(
             match try_arm(&cloud, envelope, TriageResolutionPath::CloudAfterRetry).await {
                 Ok(run) => return Ok(TriageOutcome::Decision(run)),
                 Err(ArmError::Fatal(err)) => return Err(err),
+                Err(ArmError::BudgetExhausted(err)) => {
+                    tracing::warn!(
+                        error = %err,
+                        "[triage::evaluator] cloud rejected for budget on retry; \
+                         falling back to local arm"
+                    );
+                    cloud_budget_exhausted = Some(err);
+                }
                 Err(ArmError::Retryable { .. }) => {
                     // Exhausted cloud budget — fall through to local.
                     tracing::warn!(
@@ -201,9 +222,13 @@ pub async fn run_triage_with_arms(
         // No local arm available at all (runtime disabled, no model
         // configured) — the only honest outcome is a deferral so the
         // next tick retries the whole chain.
+        let reason = match cloud_budget_exhausted {
+            Some(err) => format!("cloud budget exhausted; local arm unavailable: {err}"),
+            None => "cloud retry exhausted; local arm unavailable".to_string(),
+        };
         return Ok(TriageOutcome::Deferred {
             defer_until_ms: now_ms().saturating_add(DEFER_WAKEUP_MS),
-            reason: "cloud retry exhausted; local arm unavailable".to_string(),
+            reason,
         });
     };
 
@@ -213,11 +238,18 @@ pub async fn run_triage_with_arms(
 
     match try_arm(&local, envelope, TriageResolutionPath::LocalFallback).await {
         Ok(run) => Ok(TriageOutcome::Decision(run)),
-        Err(ArmError::Fatal(err)) | Err(ArmError::Retryable { source: err, .. }) => {
+        Err(ArmError::Fatal(err))
+        | Err(ArmError::BudgetExhausted(err))
+        | Err(ArmError::Retryable { source: err, .. }) => {
             // Local also failed — defer rather than surface a hard
             // error. Today's "hard fail" is the wrong default for a
             // transient blocker per #1257.
-            let reason = format!("cloud + local both failed: {err}");
+            let reason = match cloud_budget_exhausted {
+                Some(cloud_err) => {
+                    format!("cloud budget exhausted ({cloud_err}); local also failed: {err}")
+                }
+                None => format!("cloud + local both failed: {err}"),
+            };
             tracing::warn!(
                 error = %reason,
                 defer_ms = DEFER_WAKEUP_MS,
@@ -244,6 +276,13 @@ enum ArmError {
     /// Auth failure, missing model, prompt parse error, registry
     /// missing, etc. — retry / fallback would not change the result.
     Fatal(anyhow::Error),
+    /// Cloud upstream rejected the call because the user is out of
+    /// budget / credits. Retrying the cloud arm would just burn the
+    /// same wall, but the local arm has no upstream cost — so we
+    /// skip cloud retry, try local, and defer if local also fails.
+    /// This is **not** a fatal error: the user takes an explicit
+    /// action (top up) to fix it, so it must not page Sentry.
+    BudgetExhausted(anyhow::Error),
 }
 
 /// Run a single arm: dispatch the agent turn through the native bus
@@ -395,7 +434,42 @@ fn classify_error(message: String) -> ArmError {
             source: err,
         };
     }
+    // Budget-exceeded is technically a 400 (not 5xx/429), so the
+    // generic transient checks above won't catch it — but it is a
+    // user-actionable upstream blocker, not a code bug, so we route
+    // it through `BudgetExhausted` to avoid Sentry pages.
+    if is_inference_budget_exceeded(&message) {
+        return ArmError::BudgetExhausted(err);
+    }
     ArmError::Fatal(err)
+}
+
+/// Best-effort detection of "your inference budget is empty, top up to
+/// continue" responses from the OpenHuman backend (and friendly
+/// look-alikes from third-party providers). Kept conservative —
+/// false positives would silently swallow real Fatal errors.
+///
+/// Mirrors the patterns in `channels/providers/web.rs` but evaluated
+/// inline here so the triage evaluator doesn't take a cross-domain
+/// dependency on the web-channel module.
+fn is_inference_budget_exceeded(message: &str) -> bool {
+    let normalized: String = message
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
+        .collect();
+    let normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    [
+        "budget exceeded",
+        "budget exceed",
+        "top up",
+        "add credits",
+        "out of credits",
+        "no remaining credits",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
 }
 
 /// Heuristic for transient cloud failures the provider stack didn't
