@@ -9,6 +9,7 @@
 //! `UnifiedMemory` instances.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::openhuman::config::{
@@ -20,6 +21,39 @@ use crate::openhuman::embeddings::{
 };
 use crate::openhuman::memory::store::unified::UnifiedMemory;
 use crate::openhuman::memory::traits::Memory;
+
+/// One-shot guard so the Ollama health-gate fallback only reports to Sentry
+/// once per process lifetime. Memory is constructed many times per session
+/// (once per agent in the harness), so an unguarded `report_error` would
+/// re-create the per-embed flood the gate exists to suppress — just with a
+/// different message. The first failed probe trips this flag; subsequent
+/// probes log at debug level and skip the Sentry report.
+static OLLAMA_HEALTH_REPORTED: AtomicBool = AtomicBool::new(false);
+
+/// Reports the Ollama-unreachable fallback to Sentry at most once per
+/// process. Returns `true` on the firing call, `false` afterwards — callers
+/// use the return value only for logging context.
+fn report_ollama_health_gate_once(base_url: &str) -> bool {
+    if OLLAMA_HEALTH_REPORTED
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        log::debug!(
+            "[memory::factory] ollama health-gate fallback already reported this process; suppressing duplicate at {base_url}"
+        );
+        return false;
+    }
+    let message = format!(
+        "ollama embeddings opted-in but daemon unreachable at {base_url}; falling back to cloud embeddings for this session"
+    );
+    crate::core::observability::report_error(
+        message.as_str(),
+        "memory",
+        "ollama_health_gate",
+        &[("base_url", base_url), ("fallback", "cloud")],
+    );
+    true
+}
 
 /// Effective Ollama base URL, honouring `OPENHUMAN_OLLAMA_BASE_URL` /
 /// `OLLAMA_HOST` env vars the way the lifecycle does. Falls back to
@@ -152,19 +186,12 @@ pub async fn effective_embedding_settings_probed(
         );
         return intended;
     }
-    // Ollama is configured but not reachable. Report once at this gate so a
-    // genuine misconfiguration still surfaces in Sentry (with low cardinality
-    // — one event per session, not per embed call), then fall back to cloud
-    // for this session so the user has a working app.
-    let message = format!(
-        "ollama embeddings opted-in but daemon unreachable at {base_url}; falling back to cloud embeddings for this session"
-    );
-    crate::core::observability::report_error(
-        message.as_str(),
-        "memory",
-        "ollama_health_gate",
-        &[("base_url", base_url.as_str()), ("fallback", "cloud")],
-    );
+    // Ollama is configured but not reachable. Report once per process at this
+    // gate so a genuine misconfiguration still surfaces in Sentry — but no
+    // more than once, so re-instantiating memory across agents/sessions
+    // doesn't recreate the per-embed flood we're fixing. Then fall back to
+    // cloud so the user has a working app.
+    report_ollama_health_gate_once(&base_url);
     (
         "cloud".to_string(),
         DEFAULT_CLOUD_EMBEDDING_MODEL.to_string(),
@@ -247,21 +274,30 @@ pub fn create_memory_with_storage_and_routes(
 /// runtime (the core's main runtime), so we can park the worker via
 /// [`tokio::task::block_in_place`] and drive the probe future to completion.
 ///
-/// When no tokio runtime is available (only happens in unit-test sync
-/// contexts that don't exercise this path in practice), we skip the probe
-/// entirely and assume the daemon is reachable — that preserves the
-/// pre-health-gate behaviour for those callers and keeps tests deterministic.
+/// When no tokio runtime is available OR the runtime is single-threaded
+/// (current-thread flavour), we skip the probe entirely and assume the
+/// daemon is reachable. `block_in_place` panics on a current-thread runtime
+/// — see <https://docs.rs/tokio/latest/tokio/task/fn.block_in_place.html> —
+/// so probing in that context would crash the caller. Skipping preserves
+/// the pre-health-gate behaviour (which is what tests rely on) and is safe
+/// because the existing `OllamaEmbedding` error path still surfaces a
+/// transport failure if the daemon truly is down.
 fn probe_ollama_reachable_blocking(base_url: &str) -> bool {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        // No async runtime — skip the probe rather than spin up a private
-        // runtime (which would shadow the caller's expectations). The
-        // existing OllamaEmbedding error path still surfaces a transport
-        // failure if the daemon truly is down.
         log::debug!(
             "[memory::factory] probe_ollama_reachable_blocking: no tokio runtime in context; skipping probe"
         );
         return true;
     };
+    if !matches!(
+        handle.runtime_flavor(),
+        tokio::runtime::RuntimeFlavor::MultiThread
+    ) {
+        log::debug!(
+            "[memory::factory] probe_ollama_reachable_blocking: runtime is current-thread (block_in_place would panic); skipping probe"
+        );
+        return true;
+    }
     tokio::task::block_in_place(move || handle.block_on(probe_ollama_reachable(base_url)))
 }
 
@@ -298,15 +334,7 @@ fn create_memory_full(
             );
             intended
         } else {
-            let message = format!(
-                "ollama embeddings opted-in but daemon unreachable at {base_url}; falling back to cloud embeddings for this session"
-            );
-            crate::core::observability::report_error(
-                message.as_str(),
-                "memory",
-                "ollama_health_gate",
-                &[("base_url", base_url.as_str()), ("fallback", "cloud")],
-            );
+            report_ollama_health_gate_once(&base_url);
             (
                 "cloud".to_string(),
                 DEFAULT_CLOUD_EMBEDDING_MODEL.to_string(),
@@ -348,8 +376,45 @@ pub fn create_memory_for_migration(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::config::TEST_ENV_LOCK as ENV_LOCK;
     use axum::{routing::get, Json, Router};
+    use std::ffi::OsString;
     use std::net::SocketAddr;
+
+    /// RAII helper that swaps `OPENHUMAN_OLLAMA_BASE_URL` to `value` for the
+    /// duration of the scope while holding `TEST_ENV_LOCK` so concurrent
+    /// tests can't race on the process-global env. The previous value (if
+    /// any) is restored on drop.
+    struct EnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        prev: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(value: &str) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let prev = std::env::var_os("OPENHUMAN_OLLAMA_BASE_URL");
+            // SAFETY: env mutation is wrapped because Rust 2024 marks it
+            // unsafe; the call is gated by TEST_ENV_LOCK so no other test in
+            // this binary is observing the env concurrently.
+            unsafe {
+                std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", value);
+            }
+            Self { _lock: lock, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: same justification as `set` — still under TEST_ENV_LOCK.
+            unsafe {
+                match self.prev.take() {
+                    Some(v) => std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", v),
+                    None => std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL"),
+                }
+            }
+        }
+    }
 
     #[test]
     fn effective_memory_backend_name_always_returns_namespace() {
@@ -429,24 +494,18 @@ mod tests {
         assert_eq!(provider, "cloud");
     }
 
-    /// Sets `OPENHUMAN_OLLAMA_BASE_URL` to a deliberately unreachable address,
-    /// then verifies that the probed settings fall back to cloud when the
-    /// user has opted into local embeddings. Uses a serial guard because
-    /// other tests in this binary may also mutate the env var.
+    /// Sets `OPENHUMAN_OLLAMA_BASE_URL` to a deliberately unreachable address
+    /// under `TEST_ENV_LOCK`, then verifies that the probed settings fall
+    /// back to cloud when the user has opted into local embeddings.
     #[tokio::test]
     async fn probed_settings_fall_back_to_cloud_when_ollama_unreachable() {
-        // SAFETY: tests in this module that read the env var are gated by
-        // this test owning it for the call. Re-running locally with
-        // `cargo test -- --test-threads=1` makes this deterministic.
-        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", "http://127.0.0.1:1");
+        let _env = EnvGuard::set("http://127.0.0.1:1");
 
         let mem = MemoryConfig::default();
         let local_ai = local_ai_with_embeddings_on();
 
         let (provider, model, dims) =
             effective_embedding_settings_probed(&mem, Some(&local_ai)).await;
-
-        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
 
         assert_eq!(
             provider, "cloud",
@@ -459,7 +518,7 @@ mod tests {
     #[tokio::test]
     async fn probed_settings_keep_ollama_when_daemon_responds() {
         let url = start_mock_ollama().await;
-        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &url);
+        let _env = EnvGuard::set(&url);
 
         let mem = MemoryConfig::default();
         let local_ai = local_ai_with_embeddings_on();
@@ -467,9 +526,32 @@ mod tests {
         let (provider, _model, dims) =
             effective_embedding_settings_probed(&mem, Some(&local_ai)).await;
 
-        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
-
         assert_eq!(provider, "ollama", "healthy Ollama must be honoured");
         assert_eq!(dims, DEFAULT_OLLAMA_DIMENSIONS);
+    }
+
+    /// First call to `report_ollama_health_gate_once` fires the report;
+    /// subsequent calls in the same process must be suppressed. We can't
+    /// observe the Sentry side effect directly here, but the boolean return
+    /// value is the gate's contract — covers the once-per-process guarantee.
+    #[test]
+    fn ollama_health_gate_reports_at_most_once_per_process() {
+        // Reset the flag so this test is independent of suite ordering.
+        // SAFETY: AtomicBool::store is always safe; the comment is to flag
+        // that this test deliberately mutates module-static state.
+        OLLAMA_HEALTH_REPORTED.store(false, Ordering::Release);
+
+        assert!(
+            report_ollama_health_gate_once("http://127.0.0.1:1"),
+            "first call must fire the report"
+        );
+        assert!(
+            !report_ollama_health_gate_once("http://127.0.0.1:1"),
+            "second call must be suppressed"
+        );
+        assert!(
+            !report_ollama_health_gate_once("http://example.invalid:11434"),
+            "different URL also suppressed — gate is process-scoped, not per-URL"
+        );
     }
 }
