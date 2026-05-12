@@ -22,13 +22,24 @@
 //!
 //! ## Fallback
 //!
-//! When the backend session token is missing (the most common reason
-//! a stage fails outside production: tests, no-network smoke runs),
-//! we fall back to deterministic stubs so the loop still produces an
-//! audible blip and the unit tests stay network-free. Real
-//! transport / 5xx errors are *not* swallowed — they surface as
-//! `Note` events so a real-call failure is visible in the transcript
-//! log, not silently degraded to a stub.
+//! There are four paths through the Err arms of the LLM and TTS stages:
+//!
+//!   1. **billing-blocked short-circuit** — if `session.billing_blocked` is
+//!      already `true` (set on a prior turn), both `run_turn` and
+//!      `run_caption_turn` return `Ok(false)` immediately. No LLM/TTS calls.
+//!
+//!   2. **BillingConfigMissing (HTTP 402)** — the account is not provisioned.
+//!      Speak ONE hardcoded explanatory message via TTS. If TTS also 402s,
+//!      skip speech entirely (no stub beep). Set `billing_blocked = true`.
+//!      Record a Note with code. NEVER fall through to `stub_tts`.
+//!
+//!   3. **Server error / transport (5xx, transport)** — degrade to
+//!      `pick_ack_phrase + stub_tts` but cap retries at 3 per session. After
+//!      the cap, switch to billing-blocked behaviour (different Note text:
+//!      "backend_unavailable").
+//!
+//!   4. **Other (4xx, empty LLM response)** — existing `pick_ack_phrase +
+//!      stub_tts` fallback. Log the error code if present.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::{json, Value};
@@ -36,6 +47,7 @@ use serde_json::{json, Value};
 use super::session::registry;
 use super::types::{SessionEvent, SessionEventKind};
 use super::wav;
+use crate::api::error::{BackendApiError, BillingErrorCode};
 
 /// How many of the most recent `Heard` / `Spoke` events we feed back
 /// into the LLM as rolling conversation context. 12 ≈ a few minutes of
@@ -61,6 +73,21 @@ const MIN_TURN_SAMPLES: usize = 4_000;
 /// the ops boundary check rejects anything else outright.
 const SAMPLE_RATE_HZ: u32 = super::ops::REQUIRED_SAMPLE_RATE;
 
+/// How many consecutive server/transport errors before the session is paused.
+/// After this many failures the session behaves like a billing-blocked session
+/// (no further LLM/TTS calls) until restarted.
+const SERVER_ERR_CAP: u32 = 3;
+
+/// Hardcoded TTS message spoken exactly once when billing_config_missing
+/// is returned by the LLM endpoint. This is a pre-composed string so we do
+/// NOT call back to the failing endpoint for the message text.
+const BILLING_BLOCKED_MESSAGE: &str =
+    "My account isn't set up to talk yet — please check the OpenHuman dashboard.";
+
+/// Hardcoded TTS message spoken once when the server-error cap is hit.
+const BACKEND_UNAVAILABLE_MESSAGE: &str =
+    "I'm having trouble reaching the server — please try again later.";
+
 /// Caption-driven turn. Drains the session's pending wake-word prompt
 /// (assembled by `session::note_caption`) and runs LLM → TTS → enqueue
 /// outbound. Skips STT entirely — the captions are already text.
@@ -72,6 +99,17 @@ const SAMPLE_RATE_HZ: u32 = super::ops::REQUIRED_SAMPLE_RATE;
 /// push that flagged the wake word; subsequent calls before the
 /// delay expires are coalesced via the session's `wake_active` flag.
 pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
+    // ── 0. Billing-blocked short-circuit ────────────────────────────────────
+    // If a prior turn hit a billing error or exhausted server retries, we
+    // skip all backend calls immediately. The user must re-auth or restart.
+    let already_blocked = registry().with_session(request_id, |s| s.billing_blocked)?;
+    if already_blocked {
+        log::info!(
+            "[meet-agent] caption turn skipped request_id={request_id} reason=billing_blocked"
+        );
+        return Ok(false);
+    }
+
     // Wait briefly so a multi-fragment wake utterance ("hey openhuman
     // what's the weather like in paris" arriving as 2-3 captions) has
     // a chance to assemble before we drain the prompt.
@@ -99,15 +137,14 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
         history.len(),
     );
 
-    // Decide what to say. Three branches, all of which MUST produce a
-    // non-empty `reply_text` so the agent never silently no-ops after a
-    // wake fire — silence is the user-visible bug from issue #1372.
+    // Decide what to say. The LLM result is dispatched into one of four arms:
     //
     //   1. Wake-only ("hey openhuman" alone): skip the LLM, greet.
-    //   2. LLM call fails: ack from `pick_ack_phrase`.
-    //   3. LLM call succeeds with empty content: ack so the user
-    //      hears engagement instead of a hung mic.
-    let reply_text = if prompt_was_empty {
+    //   2. LLM call fails with billing error: speak hardcoded message, block.
+    //   3. LLM call fails with server/transport error: ack + stub_tts, cap 3.
+    //   4. LLM call fails with other error or returns empty: pick_ack_phrase.
+    //   5. LLM call succeeds: use the returned text.
+    let tts_outcome = if prompt_was_empty {
         log::info!("[meet-agent] caption turn wake-only request_id={request_id} — greeting ack");
         let _ = registry().with_session(request_id, |s| {
             s.record_event(
@@ -115,18 +152,15 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
                 "wake-only utterance — greeting ack".to_string(),
             );
         });
-        WAKE_ONLY_ACK.to_string()
+        TtsDecision::Speak(WAKE_ONLY_ACK.to_string())
     } else {
         match llm_meeting(&prompt, &history).await {
-            Ok(text) if !text.trim().is_empty() => text,
+            Ok(text) if !text.trim().is_empty() => TtsDecision::Speak(text),
             Ok(_) => {
                 // Model intentionally returned nothing despite the
                 // updated system prompt that tells it to always reply.
-                // Surface as a Note + log so the silent path is
-                // visible, then speak a short ack so the user hears
-                // engagement.
                 log::warn!(
-                    "[meet-agent] caption-turn LLM returned empty request_id={request_id} — falling back to ack"
+                    "[meet-agent] caption-turn LLM returned empty request_id={request_id} code=empty — falling back to ack"
                 );
                 let _ = registry().with_session(request_id, |s| {
                     s.record_event(
@@ -134,48 +168,111 @@ pub async fn run_caption_turn(request_id: &str) -> Result<bool, String> {
                         "LLM returned empty (using ack)".to_string(),
                     );
                 });
-                pick_ack_phrase(&prompt).to_string()
+                TtsDecision::StubAck(pick_ack_phrase(&prompt).to_string())
             }
-            Err(err) => {
+            Err(LlmError::Backend(BackendApiError::Billing(
+                BillingErrorCode::BillingConfigMissing,
+                ref msg,
+            ))) => {
+                let code = BillingErrorCode::BillingConfigMissing.as_str();
+                let status = 402u16;
                 log::warn!(
-                    "[meet-agent] caption-turn LLM failed request_id={request_id} err={err}"
+                    "[meet-agent] caption-turn LLM failed request_id={request_id} \
+                     stage=llm code={code} status={status} msg={msg}"
+                );
+                TtsDecision::BillingBlocked
+            }
+            Err(LlmError::Backend(BackendApiError::Server {
+                ref code,
+                ref message,
+                status,
+            })) => {
+                let code_str = code.as_deref().unwrap_or("unknown");
+                log::warn!(
+                    "[meet-agent] caption-turn LLM failed request_id={request_id} \
+                     stage=llm code={code_str} status={status} msg={message}"
                 );
                 let _ = registry().with_session(request_id, |s| {
                     s.record_event(
                         SessionEventKind::Note,
-                        format!("LLM failure (using ack): {err}"),
+                        format!("LLM server error (using ack): code={code_str} status={status}"),
                     );
                 });
-                pick_ack_phrase(&prompt).to_string()
+                TtsDecision::ServerError(pick_ack_phrase(&prompt).to_string())
+            }
+            Err(LlmError::Backend(BackendApiError::Transport(ref e))) => {
+                log::warn!(
+                    "[meet-agent] caption-turn LLM transport failed request_id={request_id} \
+                     stage=llm code=transport msg={e}"
+                );
+                let _ = registry().with_session(request_id, |s| {
+                    s.record_event(
+                        SessionEventKind::Note,
+                        format!("LLM transport error (using ack): {e}"),
+                    );
+                });
+                TtsDecision::ServerError(pick_ack_phrase(&prompt).to_string())
+            }
+            Err(LlmError::Backend(BackendApiError::Client {
+                status,
+                ref code,
+                ref message,
+                retry_after_secs,
+            })) => {
+                let code_str = code.as_deref().unwrap_or("unknown");
+                log::warn!(
+                    "[meet-agent] caption-turn LLM failed request_id={request_id} \
+                     stage=llm code={code_str} status={status} msg={message}"
+                );
+                if status == 429 {
+                    if let Some(secs) = retry_after_secs {
+                        log::info!(
+                            "[meet-agent] caption-turn 429 rate-limit request_id={request_id} \
+                             retry_after={secs}s"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
+                    }
+                    TtsDecision::StubAck("Give me a moment.".to_string())
+                } else {
+                    let _ = registry().with_session(request_id, |s| {
+                        s.record_event(
+                            SessionEventKind::Note,
+                            format!(
+                                "LLM client error (using ack): code={code_str} status={status}"
+                            ),
+                        );
+                    });
+                    TtsDecision::StubAck(pick_ack_phrase(&prompt).to_string())
+                }
+            }
+            Err(LlmError::Backend(BackendApiError::Billing(ref code, ref msg))) => {
+                let code_str = code.as_str();
+                log::warn!(
+                    "[meet-agent] caption-turn LLM billing failed request_id={request_id} \
+                     stage=llm code={code_str} msg={msg}"
+                );
+                TtsDecision::BillingBlocked
+            }
+            Err(LlmError::Precondition(ref msg)) => {
+                // Missing token / config error — treated like server error
+                // (most likely "no backend session token" in tests).
+                log::warn!(
+                    "[meet-agent] caption-turn LLM precondition failed request_id={request_id} \
+                     stage=llm code=precondition msg={msg}"
+                );
+                let _ = registry().with_session(request_id, |s| {
+                    s.record_event(
+                        SessionEventKind::Note,
+                        format!("LLM precondition failure (using ack): {msg}"),
+                    );
+                });
+                TtsDecision::StubAck(pick_ack_phrase(&prompt).to_string())
             }
         }
     };
 
-    let synthesized = if reply_text.trim().is_empty() {
-        // Should not happen — every branch above produces a non-empty
-        // reply — but guard so a future change can't reintroduce the
-        // silent-failure mode.
-        log::warn!(
-            "[meet-agent] caption-turn produced empty reply_text request_id={request_id} — skipping TTS"
-        );
-        Vec::new()
-    } else {
-        match tts(&reply_text).await {
-            Ok(samples) => samples,
-            Err(err) => {
-                log::warn!(
-                    "[meet-agent] caption-turn TTS failed request_id={request_id} err={err}"
-                );
-                let _ = registry().with_session(request_id, |s| {
-                    s.record_event(
-                        SessionEventKind::Note,
-                        format!("TTS failure (using stub): {err}"),
-                    );
-                });
-                stub_tts(&reply_text).await
-            }
-        }
-    };
+    // ── TTS dispatch ─────────────────────────────────────────────────────────
+    let (reply_text, synthesized) = execute_tts_decision(request_id, tts_outcome).await?;
 
     registry().with_session(request_id, |s| {
         // Record the user-side text for rolling history. For wake-only
@@ -234,10 +331,261 @@ fn pick_ack_phrase(prompt: &str) -> &'static str {
     ACK_PHRASES[(h as usize) % ACK_PHRASES.len()]
 }
 
+/// Internal enum that captures the TTS outcome decision made during the
+/// LLM dispatch phase. Separates "what to say" from "how to say it" and
+/// makes the billing-blocked path explicit so it can never accidentally
+/// fall through to `stub_tts`.
+enum TtsDecision {
+    /// Speak this text via real TTS; fall through to `stub_tts` on transient
+    /// TTS failures.
+    Speak(String),
+    /// Use a stub-TTS ack (pick_ack_phrase path — 4xx or empty response).
+    StubAck(String),
+    /// Server/transport error on the LLM stage. The embedded text is the
+    /// ack phrase. Increments `server_err_count`; on cap switch to blocked.
+    ServerError(String),
+    /// BillingConfigMissing — speak ONE hardcoded message, then block.
+    /// NEVER fall through to stub_tts.
+    BillingBlocked,
+}
+
+/// Execute the TTS decision and return `(reply_text, pcm_samples)`. Updates
+/// `session.billing_blocked` and `session.server_err_count` as a side-effect.
+async fn execute_tts_decision(
+    request_id: &str,
+    decision: TtsDecision,
+) -> Result<(String, Vec<i16>), String> {
+    match decision {
+        TtsDecision::Speak(reply_text) => {
+            // ── Real TTS path. On success, reset server error counter. ──
+            match tts(&reply_text).await {
+                Ok(samples) => {
+                    // Reset server error counter on TTS success.
+                    let _ = registry().with_session(request_id, |s| {
+                        s.server_err_count = 0;
+                    });
+                    Ok((reply_text, samples))
+                }
+                Err(TtsError::Backend(BackendApiError::Billing(
+                    BillingErrorCode::BillingConfigMissing,
+                    ref msg,
+                ))) => {
+                    let code = BillingErrorCode::BillingConfigMissing.as_str();
+                    log::warn!(
+                        "[meet-agent] TTS billing-blocked request_id={request_id} \
+                         stage=tts code={code} msg={msg} — going silent (no stub beep)"
+                    );
+                    let _ = registry().with_session(request_id, |s| {
+                        s.billing_blocked = true;
+                        s.record_event(
+                            SessionEventKind::Note,
+                            format!(
+                                "{code} — agent paused for this session (TTS also billing-blocked)"
+                            ),
+                        );
+                        // TODO(#1372-followup): wire desktop notification via event_bus
+                        // once a UserNotification DomainEvent lands.
+                    });
+                    // No audio — session is blocked. User finds out via logs.
+                    Ok((String::new(), Vec::new()))
+                }
+                Err(TtsError::Backend(BackendApiError::Server {
+                    ref code,
+                    ref message,
+                    status,
+                })) => {
+                    let code_str = code.as_deref().unwrap_or("unknown");
+                    log::warn!(
+                        "[meet-agent] TTS failed request_id={request_id} \
+                         stage=tts code={code_str} status={status} msg={message} — using stub"
+                    );
+                    let _ = registry().with_session(request_id, |s| {
+                        s.record_event(
+                            SessionEventKind::Note,
+                            format!(
+                                "TTS server error (using stub): code={code_str} status={status}"
+                            ),
+                        );
+                    });
+                    Ok((reply_text.clone(), stub_tts(&reply_text).await))
+                }
+                Err(TtsError::Backend(BackendApiError::Transport(ref e))) => {
+                    log::warn!(
+                        "[meet-agent] TTS transport failed request_id={request_id} \
+                         stage=tts code=transport msg={e} — using stub"
+                    );
+                    let _ = registry().with_session(request_id, |s| {
+                        s.record_event(
+                            SessionEventKind::Note,
+                            format!("TTS transport error (using stub): {e}"),
+                        );
+                    });
+                    Ok((reply_text.clone(), stub_tts(&reply_text).await))
+                }
+                Err(TtsError::Backend(ref e)) => {
+                    log::warn!(
+                        "[meet-agent] TTS failed request_id={request_id} \
+                         stage=tts code=other err={e} — using stub"
+                    );
+                    let _ = registry().with_session(request_id, |s| {
+                        s.record_event(
+                            SessionEventKind::Note,
+                            format!("TTS failure (using stub): {e}"),
+                        );
+                    });
+                    Ok((reply_text.clone(), stub_tts(&reply_text).await))
+                }
+                Err(TtsError::Precondition(ref msg)) => {
+                    log::warn!(
+                        "[meet-agent] TTS precondition failed request_id={request_id} \
+                         stage=tts code=precondition msg={msg} — using stub"
+                    );
+                    let _ = registry().with_session(request_id, |s| {
+                        s.record_event(
+                            SessionEventKind::Note,
+                            format!("TTS precondition failure (using stub): {msg}"),
+                        );
+                    });
+                    Ok((reply_text.clone(), stub_tts(&reply_text).await))
+                }
+                Err(TtsError::Decode(ref msg)) => {
+                    log::warn!(
+                        "[meet-agent] TTS decode failed request_id={request_id} \
+                         stage=tts code=decode msg={msg} — using stub"
+                    );
+                    let _ = registry().with_session(request_id, |s| {
+                        s.record_event(
+                            SessionEventKind::Note,
+                            format!("TTS decode failure (using stub): {msg}"),
+                        );
+                    });
+                    Ok((reply_text.clone(), stub_tts(&reply_text).await))
+                }
+            }
+        }
+
+        TtsDecision::StubAck(ack_text) => {
+            // 4xx / empty LLM — speak ack via stub, log code.
+            if ack_text.is_empty() {
+                return Ok((String::new(), Vec::new()));
+            }
+            let samples = stub_tts(&ack_text).await;
+            Ok((ack_text, samples))
+        }
+
+        TtsDecision::ServerError(ack_text) => {
+            // 5xx / transport from LLM — increment counter, maybe block.
+            let (count_after, now_blocked) = registry().with_session(request_id, |s| {
+                s.server_err_count += 1;
+                (s.server_err_count, s.server_err_count >= SERVER_ERR_CAP)
+            })?;
+
+            if now_blocked {
+                // Exhausted retries — speak the unavailability message once,
+                // then block (same path as billing, different message + note).
+                log::warn!(
+                    "[meet-agent] server error cap hit request_id={request_id} \
+                     count={count_after} — pausing session (backend_unavailable)"
+                );
+                let unavail_msg = BACKEND_UNAVAILABLE_MESSAGE.to_string();
+
+                // Attempt TTS for the unavailability message.
+                let samples = match tts(&unavail_msg).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        // If TTS also fails, go silent (don't stub_tts).
+                        log::warn!(
+                            "[meet-agent] TTS for unavail message also failed \
+                             request_id={request_id} err={e} — going silent"
+                        );
+                        Vec::new()
+                    }
+                };
+
+                let _ = registry().with_session(request_id, |s| {
+                    s.billing_blocked = true; // reuse the flag for "paused"
+                    s.record_event(
+                        SessionEventKind::Note,
+                        "backend_unavailable — agent paused for this session".to_string(),
+                    );
+                    // TODO(#1372-followup): wire desktop notification via event_bus
+                    // once a UserNotification DomainEvent lands.
+                });
+
+                Ok((unavail_msg, samples))
+            } else {
+                // Still within retry budget — speak the ack via stub.
+                log::info!(
+                    "[meet-agent] server error request_id={request_id} \
+                     count={count_after}/{SERVER_ERR_CAP} — using ack stub"
+                );
+                let _ = registry().with_session(request_id, |s| {
+                    s.record_event(
+                        SessionEventKind::Note,
+                        format!(
+                            "LLM server error (using ack stub): count={count_after}/{SERVER_ERR_CAP}"
+                        ),
+                    );
+                });
+                if ack_text.is_empty() {
+                    return Ok((String::new(), Vec::new()));
+                }
+                let samples = stub_tts(&ack_text).await;
+                Ok((ack_text, samples))
+            }
+        }
+
+        TtsDecision::BillingBlocked => {
+            // BillingConfigMissing — speak ONE hardcoded message via TTS,
+            // then block. NEVER fall through to stub_tts.
+            log::warn!(
+                "[meet-agent] billing blocked request_id={request_id} \
+                 — speaking hardcoded message and pausing session"
+            );
+
+            let hardcoded = BILLING_BLOCKED_MESSAGE.to_string();
+            let samples = match tts(&hardcoded).await {
+                Ok(s) => s,
+                Err(e) => {
+                    // TTS also billing-blocked (or any error) — go silent.
+                    // IMPORTANT: do NOT call stub_tts here; beeping is
+                    // the symptom we're fixing (issue #1372).
+                    log::warn!(
+                        "[meet-agent] billing-blocked TTS also failed request_id={request_id} \
+                         err={e} — going silent (no stub beep)"
+                    );
+                    Vec::new()
+                }
+            };
+
+            let _ = registry().with_session(request_id, |s| {
+                s.billing_blocked = true;
+                s.record_event(
+                    SessionEventKind::Note,
+                    "billing_config_missing — agent paused for this session".to_string(),
+                );
+                // TODO(#1372-followup): wire desktop notification via event_bus
+                // once a UserNotification DomainEvent lands.
+            });
+
+            Ok((hardcoded, samples))
+        }
+    }
+}
+
 /// Fire one brain turn for the named session. Returns `Ok(true)` when a
 /// turn actually ran, `Ok(false)` when the inbound buffer was below the
 /// floor.
 pub async fn run_turn(request_id: &str) -> Result<bool, String> {
+    // ── 0. Billing-blocked short-circuit ────────────────────────────────────
+    // If a prior turn hit a billing error or exhausted server retries, we
+    // skip all backend calls immediately. The user must re-auth or restart.
+    let already_blocked = registry().with_session(request_id, |s| s.billing_blocked)?;
+    if already_blocked {
+        log::info!("[meet-agent] turn skipped request_id={request_id} reason=billing_blocked");
+        return Ok(false);
+    }
+
     let (drained, history) = registry().with_session(request_id, |s| {
         let drained = s.drain_inbound();
         let history = recent_dialog_history(s.events(), CONTEXT_EVENT_WINDOW);
@@ -282,38 +630,108 @@ pub async fn run_turn(request_id: &str) -> Result<bool, String> {
     );
 
     // ─── LLM ────────────────────────────────────────────────────────
-    let reply_text = match llm_meeting(&heard, &history).await {
-        Ok(text) => text,
-        Err(err) => {
-            log::warn!("[meet-agent] LLM failed request_id={request_id} err={err}");
+    let tts_decision = match llm_meeting(&heard, &history).await {
+        Ok(text) if !text.trim().is_empty() => TtsDecision::Speak(text),
+        Ok(_) => TtsDecision::StubAck(stub_llm(&heard).await),
+        Err(LlmError::Backend(BackendApiError::Billing(
+            BillingErrorCode::BillingConfigMissing,
+            ref msg,
+        ))) => {
+            let code = BillingErrorCode::BillingConfigMissing.as_str();
+            let status = 402u16;
+            log::warn!(
+                "[meet-agent] turn LLM failed request_id={request_id} \
+                 stage=llm code={code} status={status} msg={msg}"
+            );
+            TtsDecision::BillingBlocked
+        }
+        Err(LlmError::Backend(BackendApiError::Server {
+            ref code,
+            ref message,
+            status,
+        })) => {
+            let code_str = code.as_deref().unwrap_or("unknown");
+            log::warn!(
+                "[meet-agent] turn LLM failed request_id={request_id} \
+                 stage=llm code={code_str} status={status} msg={message}"
+            );
             let _ = registry().with_session(request_id, |s| {
                 s.record_event(
                     SessionEventKind::Note,
-                    format!("LLM failure (using stub): {err}"),
+                    format!("LLM server error (using stub): code={code_str} status={status}"),
                 );
             });
-            stub_llm(&heard).await
+            TtsDecision::ServerError(pick_ack_phrase(&heard).to_string())
         }
-    };
-
-    // ─── TTS ────────────────────────────────────────────────────────
-    let synthesized = if reply_text.trim().is_empty() {
-        Vec::new()
-    } else {
-        match tts(&reply_text).await {
-            Ok(samples) => samples,
-            Err(err) => {
-                log::warn!("[meet-agent] TTS failed request_id={request_id} err={err}");
+        Err(LlmError::Backend(BackendApiError::Transport(ref e))) => {
+            log::warn!(
+                "[meet-agent] turn LLM transport failed request_id={request_id} \
+                 stage=llm code=transport msg={e}"
+            );
+            let _ = registry().with_session(request_id, |s| {
+                s.record_event(
+                    SessionEventKind::Note,
+                    format!("LLM transport error (using stub): {e}"),
+                );
+            });
+            TtsDecision::ServerError(pick_ack_phrase(&heard).to_string())
+        }
+        Err(LlmError::Backend(BackendApiError::Client {
+            status,
+            ref code,
+            ref message,
+            retry_after_secs,
+        })) => {
+            let code_str = code.as_deref().unwrap_or("unknown");
+            log::warn!(
+                "[meet-agent] turn LLM failed request_id={request_id} \
+                 stage=llm code={code_str} status={status} msg={message}"
+            );
+            if status == 429 {
+                if let Some(secs) = retry_after_secs {
+                    log::info!(
+                        "[meet-agent] turn 429 rate-limit request_id={request_id} \
+                         retry_after={secs}s"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
+                }
+                TtsDecision::StubAck("Give me a moment.".to_string())
+            } else {
                 let _ = registry().with_session(request_id, |s| {
                     s.record_event(
                         SessionEventKind::Note,
-                        format!("TTS failure (using stub): {err}"),
+                        format!("LLM client error (using stub): code={code_str} status={status}"),
                     );
                 });
-                stub_tts(&reply_text).await
+                TtsDecision::StubAck(pick_ack_phrase(&heard).to_string())
             }
         }
+        Err(LlmError::Backend(BackendApiError::Billing(ref code, ref msg))) => {
+            let code_str = code.as_str();
+            log::warn!(
+                "[meet-agent] turn LLM billing failed request_id={request_id} \
+                 stage=llm code={code_str} msg={msg}"
+            );
+            TtsDecision::BillingBlocked
+        }
+        Err(LlmError::Precondition(ref msg)) => {
+            // Missing token / config error — treated like server error.
+            log::warn!(
+                "[meet-agent] turn LLM precondition failed request_id={request_id} \
+                 stage=llm code=precondition msg={msg}"
+            );
+            let _ = registry().with_session(request_id, |s| {
+                s.record_event(
+                    SessionEventKind::Note,
+                    format!("LLM precondition failure (using stub): {msg}"),
+                );
+            });
+            TtsDecision::StubAck(stub_llm(&heard).await)
+        }
     };
+
+    // ─── TTS (via execute_tts_decision) ─────────────────────────────
+    let (reply_text, synthesized) = execute_tts_decision(request_id, tts_decision).await?;
 
     registry().with_session(request_id, |s| {
         s.record_event(SessionEventKind::Heard, heard.clone());
@@ -390,23 +808,65 @@ in one sentence rather than guessing.\n\
 just do it.\n\
 ";
 
+/// Typed error from the LLM stage.
+#[derive(Debug)]
+enum LlmError {
+    /// Pre-flight failure: missing token, config parse error, client build.
+    Precondition(String),
+    /// HTTP/transport error from the backend — fully typed.
+    Backend(BackendApiError),
+}
+
+impl std::fmt::Display for LlmError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Precondition(msg) => write!(f, "precondition: {msg}"),
+            Self::Backend(e) => write!(f, "backend: {e}"),
+        }
+    }
+}
+
+/// Typed error from the TTS stage.
+#[derive(Debug)]
+enum TtsError {
+    /// Pre-flight failure from `synthesize_reply`.
+    Precondition(String),
+    /// HTTP/transport error from the backend.
+    Backend(BackendApiError),
+    /// Base64 decode error on the PCM bytes returned by the backend.
+    Decode(String),
+}
+
+impl std::fmt::Display for TtsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Precondition(msg) => write!(f, "precondition: {msg}"),
+            Self::Backend(e) => write!(f, "backend: {e}"),
+            Self::Decode(msg) => write!(f, "decode: {msg}"),
+        }
+    }
+}
+
 /// Build a chat-completions request from rolling meeting history plus
 /// the current user prompt, post it through the backend, and return
 /// the assistant's reply (trimmed, possibly empty).
-async fn llm_meeting(prompt: &str, history: &[ConversationTurn]) -> Result<String, String> {
+async fn llm_meeting(prompt: &str, history: &[ConversationTurn]) -> Result<String, LlmError> {
     use crate::api::config::effective_api_url;
     use crate::api::jwt::get_session_token;
     use crate::api::BackendOAuthClient;
     use reqwest::Method;
 
-    let config = crate::openhuman::config::ops::load_config_with_timeout().await?;
+    let config = crate::openhuman::config::ops::load_config_with_timeout()
+        .await
+        .map_err(LlmError::Precondition)?;
     let token = get_session_token(&config)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| LlmError::Precondition(e.to_string()))?
         .filter(|t| !t.trim().is_empty())
-        .ok_or_else(|| "no backend session token".to_string())?;
+        .ok_or_else(|| LlmError::Precondition("no backend session token".to_string()))?;
 
     let api_url = effective_api_url(&config.api_url);
-    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let client =
+        BackendOAuthClient::new(&api_url).map_err(|e| LlmError::Precondition(e.to_string()))?;
 
     let mut messages: Vec<Value> = Vec::with_capacity(history.len() + 2);
     messages.push(json!({ "role": "system", "content": MEETING_SYSTEM_PROMPT }));
@@ -423,17 +883,18 @@ async fn llm_meeting(prompt: &str, history: &[ConversationTurn]) -> Result<Strin
     });
 
     let raw = client
-        .authed_json(
+        .authed_json_typed(
             &token,
             Method::POST,
             "/openai/v1/chat/completions",
             Some(body),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(LlmError::Backend)?;
 
-    let text = extract_chat_completion_text(&raw)
-        .ok_or_else(|| format!("unexpected chat completions response: {raw}"))?;
+    let text = extract_chat_completion_text(&raw).ok_or_else(|| {
+        LlmError::Precondition(format!("unexpected chat completions response: {raw}"))
+    })?;
     Ok(strip_for_speech(&text))
 }
 
@@ -454,7 +915,7 @@ fn strip_for_speech(text: &str) -> String {
             continue;
         }
         let cleaned: String = trimmed
-            .trim_start_matches(|c: char| c == '-' || c == '*' || c == '#' || c == '>')
+            .trim_start_matches(['-', '*', '#', '>'])
             .trim()
             .chars()
             .filter(|c| !matches!(c, '*' | '`' | '_' | '#'))
@@ -504,10 +965,14 @@ fn recent_dialog_history(events: &[SessionEvent], window: usize) -> Vec<Conversa
     out
 }
 
-async fn tts(text: &str) -> Result<Vec<i16>, String> {
-    use crate::openhuman::voice::reply_speech::{synthesize_reply, ReplySpeechOptions};
+async fn tts(text: &str) -> Result<Vec<i16>, TtsError> {
+    use crate::openhuman::voice::reply_speech::{
+        synthesize_reply, ReplySpeechOptions, SynthesizeError,
+    };
 
-    let config = crate::openhuman::config::ops::load_config_with_timeout().await?;
+    let config = crate::openhuman::config::ops::load_config_with_timeout()
+        .await
+        .map_err(TtsError::Precondition)?;
     // Tuned for live conversational speech, not narration:
     //   stability 0.4 — leave room for prosody / inflection. Higher
     //     values (>0.6) flatten the read into the "monotone audiobook"
@@ -531,13 +996,21 @@ async fn tts(text: &str) -> Result<Vec<i16>, String> {
         voice_settings: Some(voice_settings),
         ..Default::default()
     };
-    let outcome = synthesize_reply(&config, text, &opts).await?;
+    let outcome = synthesize_reply(&config, text, &opts)
+        .await
+        .map_err(|e| match e {
+            SynthesizeError::Precondition(msg) => TtsError::Precondition(msg),
+            SynthesizeError::Backend(be) => TtsError::Backend(be),
+        })?;
     let result = outcome.value;
     let pcm_bytes = B64
         .decode(result.audio_base64.as_bytes())
-        .map_err(|e| format!("decode tts base64: {e}"))?;
+        .map_err(|e| TtsError::Decode(format!("decode tts base64: {e}")))?;
     if !pcm_bytes.len().is_multiple_of(2) {
-        return Err(format!("odd byte length from tts: {}", pcm_bytes.len()));
+        return Err(TtsError::Decode(format!(
+            "odd byte length from tts: {}",
+            pcm_bytes.len()
+        )));
     }
     Ok(pcm_bytes
         .chunks_exact(2)
@@ -827,5 +1300,113 @@ mod tests {
             p.contains("always respond") || p.contains("do not return an empty"),
             "system prompt should instruct the model to always respond"
         );
+    }
+
+    // ── Billing-blocked behavioural tests ───────────────────────────────────
+
+    /// When `billing_blocked` is pre-set on the session, `run_caption_turn`
+    /// must short-circuit immediately and return `Ok(false)` without calling
+    /// any LLM or TTS endpoint.
+    #[tokio::test]
+    async fn billing_blocked_session_short_circuits_caption_turn() {
+        let request_id = "brain-billing-blocked-caption";
+        registry().start(request_id, 16_000).unwrap();
+
+        // Pre-set billing_blocked. This simulates the state after a prior
+        // turn received a 402 BillingConfigMissing response.
+        registry()
+            .with_session(request_id, |s| {
+                // Set the wake state so a normal non-blocked session would
+                // proceed — we want to confirm the blocked flag wins.
+                let fired = s.note_caption("Alice", "hey openhuman", 1);
+                assert!(fired, "wake word should fire even before blocking");
+                // Now mark blocked (simulates prior-turn outcome).
+                s.billing_blocked = true;
+            })
+            .unwrap();
+
+        let result = run_caption_turn(request_id).await.unwrap();
+        assert!(
+            !result,
+            "billing-blocked session must return Ok(false), got Ok({result})"
+        );
+
+        // Confirm no turn was counted.
+        registry()
+            .with_session(request_id, |s| {
+                assert_eq!(s.turn_count, 0, "no turn should have run when blocked");
+            })
+            .unwrap();
+
+        let _ = registry().stop(request_id);
+    }
+
+    /// When `billing_blocked` is pre-set on the session, `run_turn`
+    /// must short-circuit immediately and return `Ok(false)`.
+    #[tokio::test]
+    async fn billing_blocked_session_short_circuits_run_turn() {
+        let request_id = "brain-billing-blocked-run-turn";
+        registry().start(request_id, 16_000).unwrap();
+
+        // Push enough samples so the buffer size check passes; then block.
+        registry()
+            .with_session(request_id, |s| {
+                s.push_inbound_pcm(&vec![1000; 16_000]); // 1s
+                s.billing_blocked = true;
+            })
+            .unwrap();
+
+        let result = run_turn(request_id).await.unwrap();
+        assert!(
+            !result,
+            "billing-blocked session must return Ok(false), got Ok({result})"
+        );
+
+        // Confirm no turn was counted and PCM was not drained.
+        registry()
+            .with_session(request_id, |s| {
+                assert_eq!(s.turn_count, 0, "no turn should have run when blocked");
+            })
+            .unwrap();
+
+        let _ = registry().stop(request_id);
+    }
+
+    /// State-inspection test: set `billing_blocked = true` and verify that a
+    /// subsequent call with a wake prompt short-circuits before touch LLM.
+    /// This is the behavioural complement to the error-mapper unit tests
+    /// in `src/api/error.rs` — together they pin the full path:
+    ///   error mapper → correct variant → brain short-circuits.
+    #[tokio::test]
+    async fn billing_blocked_persists_across_multiple_caption_turns() {
+        let request_id = "brain-billing-persist";
+        registry().start(request_id, 16_000).unwrap();
+
+        // Simulate: first turn succeeded, then got blocked.
+        registry()
+            .with_session(request_id, |s| {
+                s.turn_count = 1;
+                s.billing_blocked = true;
+            })
+            .unwrap();
+
+        // Fire a second wake caption — should be rejected.
+        registry()
+            .with_session(request_id, |s| {
+                let _ = s.note_caption("Bob", "hey openhuman what's the time", 100);
+                // wake_active is set, but billing_blocked takes precedence.
+            })
+            .unwrap();
+
+        let result = run_caption_turn(request_id).await.unwrap();
+        assert!(!result, "second turn must be blocked");
+
+        registry()
+            .with_session(request_id, |s| {
+                assert_eq!(s.turn_count, 1, "turn count must not increase when blocked");
+            })
+            .unwrap();
+
+        let _ = registry().stop(request_id);
     }
 }

@@ -72,6 +72,19 @@ pub struct MeetAgentSession {
     /// text — a single character growth re-queues the line). Without
     /// this gate the brain spam-fires on every caption growth.
     wake_cooldown_until_ts_ms: u64,
+    /// Set to `true` when the backend returns a billing-related error
+    /// (`billing_config_missing`, `insufficient_budget`) or when the
+    /// server-error retry cap is exhausted. While `true`, both
+    /// `run_turn` and `run_caption_turn` short-circuit immediately
+    /// after recording the early-exit note — no LLM/TTS calls are
+    /// made. The session remains in this state until the user
+    /// re-authenticates or restarts the agent.
+    pub billing_blocked: bool,
+    /// Count of consecutive server/transport errors (5xx and transport
+    /// failures) on this session. Capped at 3; on hitting the cap the
+    /// session switches to `billing_blocked = true` with a
+    /// "backend_unavailable" note, distinct from the billing note.
+    pub server_err_count: u32,
 }
 
 impl MeetAgentSession {
@@ -92,6 +105,8 @@ impl MeetAgentSession {
             wake_active: false,
             last_caption_ts_ms: 0,
             wake_cooldown_until_ts_ms: 0,
+            billing_blocked: false,
+            server_err_count: 0,
         }
     }
 

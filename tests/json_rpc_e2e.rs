@@ -4541,6 +4541,219 @@ async fn json_rpc_meet_agent_caption_wake_responds_1372() {
     rpc_join.abort();
 }
 
+/// End-to-end test for the billing-config-missing (HTTP 402) error path
+/// introduced with the structured backend error envelope (paired backend PR
+/// for tinyhumansai/openhuman#1372).
+///
+/// Scenario:
+///   1. Start a meet-agent session against a mock backend that returns HTTP 402
+///      `{ code:"billing_config_missing" }` for both `/openai/v1/chat/completions`
+///      AND `/openai/v1/audio/speech`.
+///   2. Push a real wake+prompt caption (so the LLM path is exercised, not the
+///      wake-only short-circuit).
+///   3. Wait for the turn to finish. Because TTS also returns 402, the agent
+///      produces no audio but MUST NOT beep (stub_tts must NOT fire).
+///   4. Push a second caption. The session should now be `billing_blocked=true`,
+///      so the brain short-circuits — `turn_started=true` is reported by
+///      push_caption (the wake fires at the session layer) but the brain turn
+///      returns `Ok(false)` immediately.
+///   5. Stop the session. Confirm `turn_count == 1` — the first (billing-blocked)
+///      turn ran once and the second was suppressed.
+#[tokio::test]
+async fn json_rpc_meet_agent_billing_config_missing_blocks_session_1372() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    // ── Mock upstream: always returns 402 billing_config_missing ──────────────
+    // This simulates a backend where the account is not provisioned for AI.
+    // Both the LLM and TTS endpoints return the same structured error envelope.
+    let billing_error_router = {
+        use axum::http::StatusCode;
+        use axum::routing::{get, post};
+        use axum::{Json, Router};
+
+        async fn auth_me_ok() -> Json<Value> {
+            Json(json!({
+                "success": true,
+                "data": { "_id": "billing-test-user", "username": "billing-test" }
+            }))
+        }
+
+        async fn billing_402() -> (StatusCode, Json<Value>) {
+            (
+                StatusCode::PAYMENT_REQUIRED,
+                Json(json!({
+                    "success": false,
+                    "code": "billing_config_missing",
+                    "error": "Billing configuration is unavailable for this account. Please check your OpenHuman dashboard."
+                })),
+            )
+        }
+
+        Router::new()
+            .route("/auth/me", get(auth_me_ok))
+            .route("/openai/v1/chat/completions", post(billing_402))
+            .route("/openai/v1/audio/speech", post(billing_402))
+    };
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(billing_error_router).await;
+    let mock_origin = format!("http://{}", mock_addr);
+
+    // Write config pointing at the mock upstream.
+    write_min_config(&openhuman_home, &mock_origin);
+
+    // Pre-create the user-scoped config directory (same pattern as
+    // `json_rpc_protocol_auth_and_agent_hello`). When `auth_store_session`
+    // activates user "billing-test-user", it reloads the config from
+    // `~/.openhuman/users/billing-test-user/config.toml`. Without this
+    // pre-created file the user-scoped config defaults and `api_url` would
+    // be empty, so `llm_meeting` cannot reach the mock backend.
+    let user_scoped_dir = openhuman_home.join("users").join("billing-test-user");
+    write_min_config(&user_scoped_dir, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── Store a session token so the brain doesn't short-circuit on "no token" ─
+    // Without a token `llm_meeting` returns LlmError::Precondition, which goes
+    // to the StubAck path — not the billing path we're testing.
+    let store = post_json_rpc(
+        &rpc_base,
+        9300,
+        "openhuman.auth_store_session",
+        json!({ "token": "e2e-billing-test-jwt", "user_id": "billing-test-user" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "billing test: auth_store_session");
+
+    let request_id = "e2e-meet-agent-billing-1372";
+
+    // 1) start_session.
+    let start = post_json_rpc(
+        &rpc_base,
+        9301,
+        "openhuman.meet_agent_start_session",
+        json!({ "request_id": request_id, "sample_rate_hz": 16_000 }),
+    )
+    .await;
+    let start_result = assert_no_jsonrpc_error(&start, "billing test: start_session");
+    let start_body = start_result.get("result").unwrap_or(start_result);
+    assert_eq!(start_body.get("ok"), Some(&json!(true)));
+
+    // 2) Push a real wake+prompt caption so the LLM path runs (not wake-only
+    //    short-circuit).
+    let push1 = post_json_rpc(
+        &rpc_base,
+        9302,
+        "openhuman.meet_agent_push_caption",
+        json!({
+            "request_id": request_id,
+            "speaker": "Alice",
+            "text": "hey openhuman what's on the agenda today",
+            "ts_ms": 100,
+        }),
+    )
+    .await;
+    let push1_result = assert_no_jsonrpc_error(&push1, "billing test: push_caption 1");
+    let push1_body = push1_result.get("result").unwrap_or(push1_result);
+    assert_eq!(push1_body.get("ok"), Some(&json!(true)));
+    assert_eq!(
+        push1_body.get("turn_started"),
+        Some(&json!(true)),
+        "first caption must dispatch a brain turn"
+    );
+
+    // 3) Wait for the first turn to complete. The brain will attempt LLM (→ 402),
+    //    switch to BillingBlocked, attempt TTS with hardcoded message (→ 402),
+    //    and go silent. No stub beep must fire.
+    //
+    //    We wait up to ~6 s (CAPTION_TURN_DELAY_MS=1500ms + LLM round trip +
+    //    TTS round trip). Poll the session via a second push_caption — once
+    //    billing_blocked is true, `run_caption_turn` will short-circuit.
+    //
+    //    Strategy: push a second caption and check that it does NOT produce
+    //    a new turn (i.e., the count stays at 1).
+    tokio::time::sleep(Duration::from_millis(4_000)).await;
+
+    // 4) Push a second caption. The wake fires at the session layer so
+    //    turn_started=true is set, but run_caption_turn immediately returns
+    //    Ok(false) because billing_blocked=true.
+    let push2 = post_json_rpc(
+        &rpc_base,
+        9303,
+        "openhuman.meet_agent_push_caption",
+        json!({
+            "request_id": request_id,
+            "speaker": "Alice",
+            "text": "hey openhuman what time is it",
+            "ts_ms": 9_000,
+        }),
+    )
+    .await;
+    // push_caption itself may succeed even when billing is blocked.
+    // The important assertion is that no NEW turn ran — checked via turn_count.
+    let _ = assert_no_jsonrpc_error(&push2, "billing test: push_caption 2");
+
+    // Give the second (short-circuit) turn time to complete.
+    tokio::time::sleep(Duration::from_millis(2_000)).await;
+
+    // 5) Verify no PCM was queued (no stub beep — the silent path for billing).
+    let poll = post_json_rpc(
+        &rpc_base,
+        9304,
+        "openhuman.meet_agent_poll_speech",
+        json!({ "request_id": request_id }),
+    )
+    .await;
+    let poll_result = assert_no_jsonrpc_error(&poll, "billing test: poll_speech");
+    let poll_body = poll_result.get("result").unwrap_or(poll_result);
+    let pcm_b64 = poll_body
+        .get("pcm_base64")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        pcm_b64.is_empty(),
+        "billing-blocked session must produce NO audio (no stub beep): \
+         got {} bytes of base64 PCM",
+        pcm_b64.len()
+    );
+
+    // 6) Stop and verify turn_count == 1 (first billing turn ran; second was
+    //    suppressed by the short-circuit).
+    let stop = post_json_rpc(
+        &rpc_base,
+        9305,
+        "openhuman.meet_agent_stop_session",
+        json!({ "request_id": request_id }),
+    )
+    .await;
+    let stop_result = assert_no_jsonrpc_error(&stop, "billing test: stop_session");
+    let stop_body = stop_result.get("result").unwrap_or(stop_result);
+    assert_eq!(stop_body.get("ok"), Some(&json!(true)));
+
+    let turns = stop_body
+        .get("turn_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    assert_eq!(
+        turns, 1,
+        "billing-blocked path must run exactly one turn (the 402 turn); second turn \
+         was suppressed by billing_blocked short-circuit. got turn_count={turns}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
 /// End-to-end coverage for the WhatsApp agent tool wrappers shipped in
 /// issue #1341. Verifies that:
 ///

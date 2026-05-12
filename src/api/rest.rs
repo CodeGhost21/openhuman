@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 
+use super::error::{parse_backend_error, BackendApiError};
 use super::jwt::bearer_authorization_value;
 
 const CLIENT_VERSION_HEADER_MAX_LEN: usize = 64;
@@ -454,6 +455,72 @@ impl BackendOAuthClient {
         }
 
         parse_api_response_json(&text)
+    }
+
+    /// Like [`Self::authed_json`] but returns a typed [`BackendApiError`] instead of
+    /// `anyhow::Error` so callers can branch on billing vs. server vs. transport
+    /// failures without parsing error strings.
+    ///
+    /// Used by the meet-agent brain for `/openai/v1/chat/completions` and
+    /// `/openai/v1/audio/speech` — the endpoints that now return the structured
+    /// `{ success:false, code, error }` envelope.
+    pub async fn authed_json_typed(
+        &self,
+        bearer_jwt: &str,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value, BackendApiError> {
+        let url =
+            self.base
+                .join(path.trim_start_matches('/'))
+                .map_err(|e| BackendApiError::Server {
+                    status: 0,
+                    code: None,
+                    message: format!("build URL for {path}: {e}"),
+                })?;
+
+        let mut request = self
+            .client
+            .request(method.clone(), url.clone())
+            .header(AUTHORIZATION, bearer_authorization_value(bearer_jwt));
+
+        if let Some(b) = body {
+            request = request.json(&b);
+        }
+
+        let response = request.send().await.map_err(BackendApiError::Transport)?;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let text = response.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            let err = parse_backend_error(status.as_u16(), &text, &headers);
+            crate::core::observability::report_error(
+                format!(
+                    "{} {} failed ({status}): {text}",
+                    method.as_str(),
+                    url.path()
+                )
+                .as_str(),
+                "backend_api",
+                "authed_json_typed",
+                &[
+                    ("method", method.as_str()),
+                    ("path", url.path()),
+                    ("status", &status.as_u16().to_string()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+            return Err(err);
+        }
+
+        parse_api_response_json(&text).map_err(|e| BackendApiError::Server {
+            status: status.as_u16(),
+            code: None,
+            message: format!("parse JSON response: {e}"),
+        })
     }
 
     /// Lists all active integrations for the current user.

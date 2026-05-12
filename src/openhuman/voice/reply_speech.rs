@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::api::config::effective_api_url;
+use crate::api::error::BackendApiError;
 use crate::api::jwt::get_session_token;
 use crate::api::BackendOAuthClient;
 use crate::openhuman::config::Config;
@@ -70,18 +71,26 @@ pub struct ReplySpeechOptions {
 /// desktop WebView's `fetch` to the backend can fail with an opaque
 /// "Load failed" (CORS/TLS quirks), and routing through the core gives us
 /// a consistent auth + retry surface.
+///
+/// Returns a [`BackendApiError`] on non-2xx so callers (e.g. the meet-agent
+/// brain) can distinguish billing failures from transient server errors
+/// without parsing error strings. The outer `Result` carries a plain `String`
+/// for pre-flight failures (empty text, missing token, client build failure)
+/// that are unrelated to the backend's response envelope.
 pub async fn synthesize_reply(
     config: &Config,
     text: &str,
     opts: &ReplySpeechOptions,
-) -> Result<RpcOutcome<ReplySpeechResult>, String> {
+) -> Result<RpcOutcome<ReplySpeechResult>, SynthesizeError> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        return Err("text is required".to_string());
+        return Err(SynthesizeError::Precondition(
+            "text is required".to_string(),
+        ));
     }
 
     let token = get_session_token(config)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| SynthesizeError::Precondition(e.to_string()))?
         .and_then(|t| {
             let s = t.trim().to_string();
             if s.is_empty() {
@@ -90,10 +99,13 @@ pub async fn synthesize_reply(
                 Some(s)
             }
         })
-        .ok_or_else(|| "no backend session token; sign in first".to_string())?;
+        .ok_or_else(|| {
+            SynthesizeError::Precondition("no backend session token; sign in first".to_string())
+        })?;
 
     let api_url = effective_api_url(&config.api_url);
-    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let client = BackendOAuthClient::new(&api_url)
+        .map_err(|e| SynthesizeError::Precondition(e.to_string()))?;
 
     let mut body = serde_json::Map::new();
     body.insert("text".to_string(), json!(trimmed));
@@ -135,14 +147,14 @@ pub async fn synthesize_reply(
     );
 
     let raw = client
-        .authed_json(
+        .authed_json_typed(
             &token,
             Method::POST,
             "/openai/v1/audio/speech",
             Some(Value::Object(body)),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(SynthesizeError::Backend)?;
 
     let result = normalize_response(&raw);
     debug!(
@@ -156,6 +168,33 @@ pub async fn synthesize_reply(
         result,
         "voice reply synthesized via POST /openai/v1/audio/speech",
     ))
+}
+
+/// Error returned by [`synthesize_reply`].
+#[derive(Debug)]
+pub enum SynthesizeError {
+    /// Pre-flight failure: empty text, missing token, client build error.
+    /// Not related to the backend's HTTP response envelope.
+    Precondition(String),
+    /// Non-2xx from the backend, parsed into a typed [`BackendApiError`].
+    Backend(BackendApiError),
+}
+
+impl std::fmt::Display for SynthesizeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Precondition(msg) => write!(f, "synthesize precondition: {msg}"),
+            Self::Backend(e) => write!(f, "synthesize backend: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for SynthesizeError {}
+
+impl From<SynthesizeError> for String {
+    fn from(e: SynthesizeError) -> Self {
+        e.to_string()
+    }
 }
 
 /// Translate the backend's tolerant response shape into the UI contract.
