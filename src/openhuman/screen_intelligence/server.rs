@@ -387,7 +387,9 @@ fn is_expected_macos_only_failure(err: &str) -> bool {
 /// own `start_session` call is a duplicate, not a failure. Canonical wire
 /// shape from `engine::start_session`:
 ///
-///     "session already active"
+/// ```text
+/// "session already active"
+/// ```
 ///
 /// Reaches the server when the engine session was created via a different
 /// entry point before the embedded `run()` got there — typically
