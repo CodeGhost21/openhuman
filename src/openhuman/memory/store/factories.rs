@@ -43,14 +43,16 @@ fn report_ollama_health_gate_once(base_url: &str) -> bool {
         );
         return false;
     }
-    let message = format!(
-        "ollama embeddings opted-in but daemon unreachable at {base_url}; falling back to cloud embeddings for this session"
-    );
     // Tags are indexed and grouped on; keep them low-cardinality and free of
     // credentials. Full URL stays in the message body for diagnostics.
     let host_tag = redact_ollama_host(base_url);
-    crate::core::observability::report_error(
-        message.as_str(),
+    let message = format!(
+        "ollama embeddings opted-in but daemon unreachable at {base_url}; falling back to cloud embeddings for this session"
+    );
+    // Call report_error_message directly to avoid a redundant format!("{:#}") round-trip
+    // that report_error would perform on an already-formatted &str.
+    crate::core::observability::report_error_message(
+        &message,
         "memory",
         "ollama_health_gate",
         &[("ollama_host", host_tag), ("fallback", "cloud")],
@@ -226,6 +228,9 @@ pub async fn effective_embedding_settings_probed(
     // more than once, so re-instantiating memory across agents/sessions
     // doesn't recreate the per-embed flood we're fixing. Then fall back to
     // cloud so the user has a working app.
+    log::warn!(
+        "[memory::factory] ollama unreachable at {base_url}; falling back to cloud embedder for this session"
+    );
     report_ollama_health_gate_once(&base_url);
     cloud_embedding_fallback()
 }
@@ -355,6 +360,7 @@ fn create_memory_full(
     //    Prevents OPENHUMAN-TAURI-B7's 226-event Sentry flood: instead of
     //    one Sentry event per embed attempt, we report once at the gate
     //    (low cardinality, high signal) and serve the session from cloud.
+    let gate_triggered;
     let (provider, model, dims) = if intended.0 == "ollama" {
         let base_url = ollama_base_url_for_probe();
         if probe_ollama_reachable_blocking(&base_url) {
@@ -363,17 +369,24 @@ fn create_memory_full(
                 intended.1,
                 intended.2,
             );
+            gate_triggered = false;
             intended
         } else {
+            log::warn!(
+                "[memory::factory] ollama unreachable at {base_url}; falling back to cloud embedder for this session"
+            );
             report_ollama_health_gate_once(&base_url);
+            gate_triggered = true;
             cloud_embedding_fallback()
         }
     } else {
+        gate_triggered = false;
         intended
     };
 
     log::debug!(
-        "[memory::factory] effective embedding settings: provider={provider} model={model} dims={dims} (local_ai_opt_in={local_ai_opt_in})",
+        "[memory::factory] effective embedding settings: provider={provider} model={model} dims={dims} \
+         (local_ai_opt_in={local_ai_opt_in} gate_triggered={gate_triggered})",
     );
 
     // 3. Create the embedding provider.
