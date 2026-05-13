@@ -363,6 +363,7 @@ mod tests {
     async fn transport_failure_classifier_catches_unreachable_host() {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(250))
+            .no_proxy()
             .build()
             .expect("build reqwest client");
         let result = client.get("http://192.0.2.1:1/").send().await;
