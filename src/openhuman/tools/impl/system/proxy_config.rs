@@ -27,12 +27,39 @@ impl ProxyConfigTool {
             )
         })?;
 
-        let mut parsed: Config = toml::from_str(&contents).map_err(|error| {
-            anyhow::anyhow!(
-                "Failed to parse config file {}: {error}",
-                self.config.config_path.display()
-            )
-        })?;
+        let mut parsed: Config = match toml::from_str::<Config>(&contents) {
+            Ok(c) => c,
+            Err(parse_err) => {
+                // OPENHUMAN-TAURI-BJ: a corrupt config.toml used to bubble
+                // "Failed to parse config file …" out of the proxy tool
+                // (and into Sentry as an error event). Fall back to the
+                // in-memory snapshot loaded at startup so the tool stays
+                // usable.
+                //
+                // Move the corrupt file aside to `<path>.toml.corrupted`
+                // — matching `Config::load_or_init`'s convention — so a
+                // subsequent `save()` (from handle_set/disable) does NOT
+                // copy the corrupt content over the good `.toml.bak` that
+                // `parse_config_with_recovery` relies on for restoring
+                // the last-known-good config on the next startup.
+                let corrupted_path = self.config.config_path.with_extension("toml.corrupted");
+                tracing::warn!(
+                    path = %self.config.config_path.display(),
+                    corrupted = %corrupted_path.display(),
+                    error = %parse_err,
+                    "[proxy_config] config.toml unparseable — moving aside and falling back to in-memory config"
+                );
+                if let Err(rename_err) = fs::rename(&self.config.config_path, &corrupted_path) {
+                    tracing::warn!(
+                        path = %self.config.config_path.display(),
+                        corrupted = %corrupted_path.display(),
+                        error = %rename_err,
+                        "[proxy_config] Failed to move corrupted config aside; continuing with in-memory state"
+                    );
+                }
+                (*self.config).clone()
+            }
+        };
         parsed.config_path = self.config.config_path.clone();
         parsed.workspace_dir = self.config.workspace_dir.clone();
         Ok(parsed)

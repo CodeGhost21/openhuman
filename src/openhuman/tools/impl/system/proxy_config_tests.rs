@@ -109,6 +109,62 @@ async fn set_null_proxy_url_clears_existing_value() {
     assert!(parsed["proxy"]["http_proxy"].is_null());
 }
 
+#[tokio::test]
+async fn get_action_recovers_when_config_file_is_corrupted() {
+    // Regression for OPENHUMAN-TAURI-BJ: a partial-write or schema-drifted
+    // config.toml used to bubble "Failed to parse config file …" out of the
+    // proxy tool. Make sure it falls back to the in-memory snapshot, moves
+    // the corrupt file aside, and the tool keeps working.
+    let tmp = TempDir::new().unwrap();
+    let cfg = test_config(&tmp).await;
+
+    // Save once more — the first save() in `test_config` skips the
+    // copy-to-.bak step because `had_existing_config` is false, so we need
+    // a second save to materialise the last-known-good .toml.bak. We
+    // capture its bytes so we can assert the recovery does NOT clobber
+    // them (Config::load_or_init relies on that backup at next startup to
+    // restore the last-known-good config — destroying it would defeat
+    // the upstream recovery path).
+    cfg.save().await.unwrap();
+    let backup_path = cfg.config_path.with_extension("toml.bak");
+    assert!(
+        backup_path.exists(),
+        "second save must have produced a .toml.bak"
+    );
+    let good_backup_bytes = std::fs::read(&backup_path).unwrap();
+
+    // Stomp the on-disk config with unparseable bytes — emulates a
+    // crash-mid-save / disk-full / cross-version write race.
+    let corrupt = b"not valid = toml = at all\n\x00garbage";
+    std::fs::write(&cfg.config_path, corrupt).unwrap();
+
+    let tool = ProxyConfigTool::new(cfg.clone(), test_security());
+    let result = tool.execute(json!({"action": "get"})).await.unwrap();
+
+    assert!(
+        !result.is_error,
+        "proxy_config get must not surface a parse error: {:?}",
+        result.output()
+    );
+
+    let corrupted_path = cfg.config_path.with_extension("toml.corrupted");
+    assert!(
+        corrupted_path.exists(),
+        "expected corrupt config to be moved aside to {}",
+        corrupted_path.display()
+    );
+    assert_eq!(
+        std::fs::read(&corrupted_path).unwrap(),
+        corrupt,
+        ".toml.corrupted must preserve the original corrupt bytes verbatim"
+    );
+    assert_eq!(
+        std::fs::read(&backup_path).unwrap(),
+        good_backup_bytes,
+        ".toml.bak must be left intact for parse_config_with_recovery"
+    );
+}
+
 // ── parse_scope ──────────────────────────────────────────────────
 
 #[test]
