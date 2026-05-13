@@ -522,14 +522,19 @@ fn classify_error(message: String) -> ArmError {
     ArmError::Fatal(err)
 }
 
-/// Best-effort detection of "your inference budget is empty, top up to
-/// continue" responses from the OpenHuman backend (and friendly
-/// look-alikes from third-party providers). Kept conservative —
-/// false positives would silently swallow real Fatal errors.
+/// Returns `true` when `message` signals that the upstream rejected the
+/// call because the user's inference budget or credit balance is empty —
+/// meaning a retry would hit the same wall.
 ///
-/// Mirrors the patterns in `channels/providers/web.rs` but evaluated
-/// inline here so the triage evaluator doesn't take a cross-domain
-/// dependency on the web-channel module.
+/// The vocabulary matches the OpenHuman backend's error copy and common
+/// third-party provider phrasing. It does **not** mirror the
+/// *semantics* of `channels/providers/web.rs` (a different code path);
+/// it is an independent, conservative allowlist evaluated inline so the
+/// triage evaluator carries no cross-domain import.
+///
+/// Kept conservative on purpose: a false positive would silently
+/// reclassify a real `Fatal` error as `BudgetExhausted`, hiding it from
+/// Sentry.
 fn is_inference_budget_exceeded(message: &str) -> bool {
     // Normalize: lowercase, replace non-alphanumeric with spaces, then
     // split into whitespace-separated tokens. This lets us do
@@ -545,7 +550,7 @@ fn is_inference_budget_exceeded(message: &str) -> bool {
     let words: Vec<&str> = normalized.split_whitespace().collect();
     const NEEDLES: &[&str] = &[
         "budget exceeded",
-        "budget exceed",
+        "budget exceeds",
         "top up",
         "add credits",
         "out of credits",

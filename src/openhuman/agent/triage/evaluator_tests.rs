@@ -117,6 +117,19 @@ fn classify_string_recognises_budget_exceeded_as_budget_exhausted() {
 }
 
 #[test]
+fn classify_string_recognises_budget_exceeds_your_limit() {
+    // Exercises the "budget exceeds" needle added to NEEDLES as a
+    // grammatically-correct variant of "budget exceeded" (past
+    // tense vs. present tense) — matches e.g. "Your budget exceeds
+    // your limit for this billing period."
+    let err = classify_error("Your budget exceeds your limit for this billing period.".to_string());
+    assert!(
+        matches!(err, ArmError::BudgetExhausted(_)),
+        "\"budget exceeds\" must classify as BudgetExhausted"
+    );
+}
+
+#[test]
 fn classify_string_does_not_match_budget_phrases_across_word_boundaries() {
     // Regression: a substring-based check would fire BudgetExhausted
     // on "stop updating" because the normalized text contains the
@@ -359,7 +372,7 @@ async fn cloud_then_local_failure_returns_deferred() {
                 "defer_until_ms must be in the future"
             );
             assert!(
-                reason.to_lowercase().contains("503") || reason.contains("cloud"),
+                reason.contains("cloud retry exhausted"),
                 "reason should reference the upstream failure: {reason}"
             );
         }
@@ -432,7 +445,7 @@ async fn cloud_budget_exhausted_skips_retry_and_falls_to_local() {
     })
     .await;
 
-    let outcome = run_triage_with_arms(cloud_arm(), Some(local_arm()), &envelope())
+    let outcome = run_triage_with_arms_for_test(cloud_arm(), Some(local_arm()), &envelope())
         .await
         .expect("budget-exhausted must not surface as Err");
 
@@ -492,7 +505,7 @@ async fn cloud_budget_exhausted_on_retry_falls_through_to_local() {
     })
     .await;
 
-    let outcome = run_triage_with_arms(cloud_arm(), Some(local_arm()), &envelope())
+    let outcome = run_triage_with_arms_for_test(cloud_arm(), Some(local_arm()), &envelope())
         .await
         .expect("budget on retry must not surface as Err");
 
@@ -524,7 +537,7 @@ async fn cloud_budget_exhausted_without_local_returns_deferred_not_err() {
     })
     .await;
 
-    let outcome = run_triage_with_arms(cloud_arm(), None, &envelope())
+    let outcome = run_triage_with_arms_for_test(cloud_arm(), None, &envelope())
         .await
         .expect("budget-exhausted with no local must be Deferred, not Err");
 
