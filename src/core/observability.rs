@@ -39,6 +39,7 @@ pub const TRANSIENT_PROVIDER_HTTP_STATUSES: &[u16] = &[408, 429, 502, 503, 504];
 pub enum ExpectedErrorKind {
     LocalAiDisabled,
     ApiKeyMissing,
+    NetworkUnreachable,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -49,7 +50,34 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("api key not set") || lower.contains("missing api key") {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
+    if is_network_unreachable_message(&lower) {
+        return Some(ExpectedErrorKind::NetworkUnreachable);
+    }
     None
+}
+
+/// Detect transport-level connection failures that fire before any HTTP status
+/// is observed — DNS resolution failures, TCP connect refused/reset, TLS
+/// handshake failures, or ISP/firewall blocks. The canonical shape is
+/// reqwest's `"error sending request for url (…)"`, which surfaces from any
+/// HTTP call site (provider chat, embeddings, backend RPC) when the request
+/// can't reach the server at all.
+///
+/// These are user-environment problems — VPN drop, captive portal, ISP-level
+/// block (OPENHUMAN-TAURI-32: user in RU couldn't reach `api.tinyhumans.ai`),
+/// firewall — that no amount of retry / fallback on our side can resolve.
+/// Sentry has no signal to act on (no status, no trace, no payload), so each
+/// occurrence is pure noise. Classify them as expected so the report site
+/// logs a breadcrumb rather than spawning an error event.
+fn is_network_unreachable_message(lower: &str) -> bool {
+    lower.contains("error sending request for url")
+        || lower.contains("dns error")
+        || lower.contains("connection refused")
+        || lower.contains("connection reset")
+        || lower.contains("network is unreachable")
+        || lower.contains("no route to host")
+        || lower.contains("tls handshake")
+        || lower.contains("certificate verify failed")
 }
 
 /// Capture an error to Sentry with structured tags.
@@ -114,6 +142,14 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected API-key configuration error: {message}"
+            );
+        }
+        ExpectedErrorKind::NetworkUnreachable => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected network-unreachable error: {message}"
             );
         }
     }
@@ -216,6 +252,53 @@ mod tests {
         );
         assert_eq!(
             expected_error_kind("ollama embed failed with status 500"),
+            None
+        );
+    }
+
+    #[test]
+    fn classifies_network_unreachable_errors() {
+        // OPENHUMAN-TAURI-32: reqwest's transport-level error wrapped by the
+        // web_channel error site. The classifier must catch it even when
+        // embedded in caller context, since `report_error_or_expected` runs
+        // `expected_error_kind` on the full anyhow chain.
+        assert_eq!(
+            expected_error_kind(
+                "run_chat_task failed client_id=abc thread_id=t1 request_id=r1 \
+                 error=error sending request for url (https://api.tinyhumans.ai/openai/v1/chat/completions)"
+            ),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+        for raw in [
+            "error sending request for url (https://api.example.com/x)",
+            "provider failed: dns error: failed to lookup address information",
+            "tcp connect: connection refused (os error 61)",
+            "stream closed: connection reset by peer",
+            "network is unreachable (os error 51)",
+            "no route to host",
+            "tls handshake eof",
+            "certificate verify failed: unable to get local issuer certificate",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::NetworkUnreachable),
+                "should classify as network-unreachable: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_provider_errors_as_network() {
+        // Status-bearing provider failures (404, 500, …) are surfaced via
+        // their HTTP status path and must NOT be silenced by the
+        // network-unreachable classifier — the body text doesn't hit any of
+        // the transport-level markers.
+        assert_eq!(
+            expected_error_kind("OpenAI API error (404): model gpt-x not found"),
+            None
+        );
+        assert_eq!(
+            expected_error_kind("OpenAI API error (500): internal server error"),
             None
         );
     }
