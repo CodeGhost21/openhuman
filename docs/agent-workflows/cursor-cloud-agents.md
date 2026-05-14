@@ -103,14 +103,13 @@ Rules:
 
 ### Pre-launch collision check
 
-Before launching a batch, the operator runs:
+Before launching a batch, the operator writes a batch file describing each issue's lane and the paths the agent is allowed to touch (see [`pilot-batch-1480.json`](pilot-batch-1480.json) for the canonical format), then runs:
 
 ```bash
-# Show file overlap among scheduled issues, where each line is "issue-number file"
-node scripts/agent-batch-overlap.mjs issues.json
+node scripts/agent-batch-overlap.mjs docs/agent-workflows/<your-batch>.json
 ```
 
-(If the helper script is not present yet, do the same check by hand: list the files each issue is scoped to touch and diff the lists.) Any overlap must be resolved before launch by reassigning scope or sequencing the issues. Do not rely on git to catch it after the fact.
+The script reports lane assignments, pairwise path overlap, and choke-point conflicts (`src/core/all.rs`, controller registries, `tauri.conf.json`, `package.json`, `Cargo.lock`, `pnpm-lock.yaml`, etc.). It exits non-zero on any collision. Resolve every reported collision by reassigning scope or sequencing the issues before launch — do not rely on git to catch it after the fact.
 
 ---
 

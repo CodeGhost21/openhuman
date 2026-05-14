@@ -1,0 +1,24 @@
+{
+  "batch": "cursor-cloud-pilot-1480",
+  "notes": "Pilot batch for the Cursor Cloud Agents workflow validation (issue #1480). Three lane-disjoint issues on tinyhumansai/openhuman. Each agent is scoped to the listed paths; the agent must not touch files outside them.",
+  "issues": [
+    {
+      "number": 1502,
+      "title": "Reduce bottom tabs to make the app feel cleaner",
+      "lane": "frontend-ui",
+      "paths": ["app/src/components/"]
+    },
+    {
+      "number": 1675,
+      "title": "AI repeats every Chinese response twice when asked to answer in Chinese",
+      "lane": "rust-core/agent",
+      "paths": ["src/openhuman/agent/"]
+    },
+    {
+      "number": 1599,
+      "title": "feat(release): add official Linux aarch64 (ARM64) release binaries",
+      "lane": "ci-config",
+      "paths": [".github/workflows/", "scripts/"]
+    }
+  ]
+}
