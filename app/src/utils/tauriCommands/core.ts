@@ -265,7 +265,12 @@ export async function resetOpenHumanDataAndRestartCore(): Promise<void> {
   // 32) because the core still held SQLite / log / Sentry handles open in
   // the directory it was trying to delete (OPENHUMAN-TAURI-AF).
   console.debug('[core] resetOpenHumanDataAndRestartCore: invoking reset_local_data');
-  await invoke<void>('reset_local_data');
+  try {
+    await invoke<void>('reset_local_data');
+  } catch (err) {
+    console.error('[core] resetOpenHumanDataAndRestartCore: reset_local_data failed', err);
+    throw err;
+  }
   console.debug('[core] resetOpenHumanDataAndRestartCore: done');
 }
 

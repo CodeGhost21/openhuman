@@ -1,10 +1,12 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
+
+type TauriInternalsHolder = { __TAURI_INTERNALS__?: { invoke: unknown } };
 
 describe('tauriCommands', () => {
   const mockIsTauri = isTauri as Mock;
@@ -15,6 +17,7 @@ describe('tauriCommands', () => {
   let storeSession: typeof import('../tauriCommands').storeSession;
   let openhumanLocalAiStatus: typeof import('../tauriCommands').openhumanLocalAiStatus;
   let openhumanServiceStatus: typeof import('../tauriCommands').openhumanServiceStatus;
+  let prevInternals: TauriInternalsHolder['__TAURI_INTERNALS__'];
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -25,15 +28,24 @@ describe('tauriCommands', () => {
     // isn't enough — the wrapper would still return false in tests and
     // every helper would hit its `if (!isTauri()) return;` early-exit.
     // Stub a minimal internals shape so the wrapper resolves to true.
-    (window as unknown as { __TAURI_INTERNALS__?: { invoke: unknown } }).__TAURI_INTERNALS__ = {
-      invoke: () => undefined,
-    };
+    const holder = window as unknown as TauriInternalsHolder;
+    prevInternals = holder.__TAURI_INTERNALS__;
+    holder.__TAURI_INTERNALS__ = { invoke: () => undefined };
     const actual = await vi.importActual<typeof import('../tauriCommands')>('../tauriCommands');
     getAuthState = actual.getAuthState;
     resetOpenHumanDataAndRestartCore = actual.resetOpenHumanDataAndRestartCore;
     storeSession = actual.storeSession;
     openhumanLocalAiStatus = actual.openhumanLocalAiStatus;
     openhumanServiceStatus = actual.openhumanServiceStatus;
+  });
+
+  afterEach(() => {
+    const holder = window as unknown as TauriInternalsHolder;
+    if (prevInternals === undefined) {
+      delete holder.__TAURI_INTERNALS__;
+    } else {
+      holder.__TAURI_INTERNALS__ = prevInternals;
+    }
   });
 
   test('getAuthState maps result shape from core response', async () => {

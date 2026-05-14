@@ -324,21 +324,50 @@ async fn reset_local_data(
     //
     // Missing entries are non-fatal: the user may already have manually
     // cleared the dir, or the marker may not exist for fresh installs.
-    remove_path_if_exists(
-        &paths.active_workspace_marker_path,
-        "active workspace marker",
-    )
-    .await?;
-    remove_dir_if_exists(&paths.current_openhuman_dir, "current openhuman dir").await?;
-    if paths.default_openhuman_dir != paths.current_openhuman_dir {
-        remove_dir_if_exists(&paths.default_openhuman_dir, "default openhuman dir").await?;
-    } else {
-        log::debug!("[core] reset_local_data: default dir == current dir; already removed above");
+    //
+    // Capture the first delete error (if any) instead of propagating with
+    // `?` — we must still restart the embedded core in step 5 so the app
+    // doesn't end up with the sidecar dead. The original delete error is
+    // surfaced after the restart attempt.
+    let delete_result: Result<(), String> = async {
+        remove_path_if_exists(
+            &paths.active_workspace_marker_path,
+            "active workspace marker",
+        )
+        .await?;
+        remove_dir_if_exists(&paths.current_openhuman_dir, "current openhuman dir").await?;
+        if paths.default_openhuman_dir != paths.current_openhuman_dir {
+            remove_dir_if_exists(&paths.default_openhuman_dir, "default openhuman dir").await?;
+        } else {
+            log::debug!(
+                "[core] reset_local_data: default dir == current dir; already removed above"
+            );
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(ref e) = delete_result {
+        log::warn!("[core] reset_local_data: delete step failed: {e}; will still restart core");
     }
 
     // ── 5. Restart the embedded core ────────────────────────────────────
-    state.inner().ensure_running().await?;
-    log::info!("[core] reset_local_data: embedded core back up");
+    //
+    // Always attempt restart, even if delete failed — otherwise the user
+    // is left with a dead sidecar. If restart itself fails, prefer the
+    // original delete error (more actionable) over the restart error.
+    let restart_result = state.inner().ensure_running().await;
+    match (&delete_result, &restart_result) {
+        (Ok(()), Ok(())) => log::info!("[core] reset_local_data: embedded core back up"),
+        (Err(_), Ok(())) => log::warn!(
+            "[core] reset_local_data: core restarted but delete step failed; surfacing delete error"
+        ),
+        (Ok(()), Err(e)) => log::error!("[core] reset_local_data: core restart failed: {e}"),
+        (Err(_), Err(e)) => log::error!(
+            "[core] reset_local_data: both delete and restart failed; restart error: {e}"
+        ),
+    }
+    delete_result?;
+    restart_result?;
     Ok(())
 }
 
@@ -358,7 +387,10 @@ async fn fetch_data_paths() -> Result<ResolvedDataPaths, String> {
         "method": "openhuman.config_get_data_paths",
         "params": {}
     });
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("config_get_data_paths client build failed: {e}"))?;
     let req = crate::core_rpc::apply_auth(client.post(&url))?;
     let res = req
         .json(&body)
