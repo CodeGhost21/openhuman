@@ -775,6 +775,26 @@ fn is_daemon_mode() -> bool {
     std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
 }
 
+/// Returns true when an executable named `name` is discoverable on `$PATH`.
+///
+/// Inline `which`-style lookup so the deep-link pre-flight on Linux can
+/// skip `tauri-plugin-deep-link::register_all` cleanly when `xdg-mime` is
+/// missing (OPENHUMAN-TAURI-AS). Walks `$PATH` entries, joins `name`, and
+/// returns true on the first hit that is a regular file. The metadata check
+/// is `is_file()` rather than an executable-bit check: on Linux any file in
+/// `$PATH` that is named like the binary is enough to gate the plugin call
+/// (the plugin itself will surface the real exec error to its own warn),
+/// and an executable-bit check would require unix-specific
+/// `MetadataExt::mode` plumbing that isn't worth the platform branch for a
+/// single discoverability gate.
+#[cfg(target_os = "linux")]
+fn path_has_executable(name: &str) -> bool {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path_var).any(|dir| dir.join(name).is_file())
+}
+
 /// Tauri command: bring the main window to front from any webview (e.g. overlay orb click).
 #[tauri::command]
 fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
@@ -1665,10 +1685,38 @@ pub fn run() {
     let builder = builder.manage(meet_video::frame_bus::MeetVideoFrameBusState::new());
     builder
         .setup(move |app| {
-            #[cfg(any(windows, target_os = "linux"))]
+            #[cfg(windows)]
             {
                 if let Err(err) = app.deep_link().register_all() {
                     log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                }
+            }
+            #[cfg(target_os = "linux")]
+            {
+                // `tauri-plugin-deep-link::register_all` on Linux shells out
+                // to `xdg-mime` (and `update-desktop-database` / `xdg-icon-resource`)
+                // to install MIME-type associations for our custom URL
+                // schemes. On Linux installs that ship without xdg-utils —
+                // WSL2 without a desktop env, headless servers, minimal
+                // containers (OPENHUMAN-TAURI-AS: WSL2 user in BR) — the
+                // tool isn't on PATH and the plugin fires
+                // `log::error!("Failed to run OS command \`xdg-mime\`…")`
+                // *internally* before returning the Err. That internal
+                // error log is scooped up by `sentry-tracing` into a Sentry
+                // event even though our `if let Err` arm below already
+                // demotes the user-visible failure to a warn. Skip the
+                // plugin call entirely when xdg-mime isn't available so
+                // the internal log never fires — registration only matters
+                // on systems with a desktop environment, where xdg-utils
+                // is part of the desktop install anyway.
+                if path_has_executable("xdg-mime") {
+                    if let Err(err) = app.deep_link().register_all() {
+                        log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                    }
+                } else {
+                    log::warn!(
+                        "[deep-link] skipping register_all — xdg-mime not on PATH (xdg-utils not installed; deep-link MIME registration unavailable on this host)"
+                    );
                 }
             }
 
