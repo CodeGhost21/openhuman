@@ -185,12 +185,13 @@ The end-to-end sequence the operator follows for a 15-20 agent batch. The pilot 
 
 1. **Pick issues.** Tag candidate issues with `cursor-cloud-batch` and confirm each has a clear acceptance criteria block. Reject issues that span multiple lanes (split first).
 2. **Assign lanes.** For each issue, write the lane and the explicit owned paths into the issue body (a `## Cursor Lane` section). The launch comment references this section.
-3. **Run pre-launch collision check.** Confirm no two issues touch the same paths. Resolve overlaps before launching.
-4. **Open the batch parent issue.** Title: `Cursor Cloud batch <YYYY-MM-DD>`. List each child issue as a checkbox. Link the GitHub Project board view.
-5. **Launch.** Post the launch comment on each child issue. Cursor Cloud picks them up; one agent per issue.
-6. **Monitor.** Watch the operator dashboard. When a PR turns `CI failing` twice in a row, mark blocked. When a PR is `Review requested`, route to a human. Do not leave agents looping on the same failure.
-7. **Reconcile.** As PRs merge, tick the parent-issue checklist. When the parent is fully checked, close the batch.
-8. **Retro.** After every scaled batch, record collision rate, CI failure rate, secret-policy violations (should be zero), and merge-time per agent in the batch parent issue before closing.
+3. **Run pre-launch collision check.** Run `node scripts/agent-batch-overlap.mjs <batch>.json` and confirm it reports PASS. Resolve any reported overlap before launching.
+4. **Generate the paste buffer.** Run `node scripts/agent-batch-comments.mjs <batch>.json` — it prints the parent-issue body and one launch comment per child issue, all derived from the same batch file. Review the output before pasting.
+5. **Open the batch parent issue.** Title: `Cursor Cloud batch <YYYY-MM-DD>`. Use the parent-issue body printed by the generator. Link the GitHub Project board view.
+6. **Launch.** Post the per-issue launch comment from the generator on each child issue. Cursor Cloud picks them up; one agent per issue.
+7. **Monitor.** Watch the operator dashboard. When a PR turns `CI failing` twice in a row, mark blocked. When a PR is `Review requested`, route to a human. Do not leave agents looping on the same failure.
+8. **Reconcile.** As PRs merge, tick the parent-issue checklist. When the parent is fully checked, close the batch.
+9. **Retro.** After every scaled batch, record collision rate, CI failure rate, secret-policy violations (should be zero), and merge-time per agent in the batch parent issue before closing.
 
 ---
 
