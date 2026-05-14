@@ -121,7 +121,10 @@ function postOrUpdateTrackingComment(spec, body) {
       `repos/${spec.base_repo}/issues/${issue}/comments`,
       "--paginate",
       "--jq",
-      `[.[] | select(.body | contains("${COMMENT_MARKER(spec.batch_id)}")) | {id, html_url}]`,
+      // Emit one object per line. `gh api --paginate` runs the jq filter
+      // per-page; wrapping in `[...]` would produce concatenated array
+      // fragments that aren't valid JSON. NDJSON sidesteps that.
+      `.[] | select(.body | contains("${COMMENT_MARKER(spec.batch_id)}")) | {id, html_url}`,
     ],
     { encoding: "utf8" },
   );
@@ -130,7 +133,11 @@ function postOrUpdateTrackingComment(spec, body) {
       `gh api failed (${list.status}): ${list.stderr?.trim() || "unknown error"}`,
     );
   }
-  const existing = JSON.parse(list.stdout || "[]");
+  const existing = (list.stdout || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line));
   if (existing.length === 0) {
     const r = spawnSync(
       "gh",
@@ -153,6 +160,9 @@ function postOrUpdateTrackingComment(spec, body) {
     );
   } else {
     const id = existing[0].id;
+    // Pass the comment body via stdin (-F body=@-) rather than a command-line
+    // arg. Long markdown tables can grow large and -f body=${body} risks
+    // hitting OS argv length limits (ARG_MAX).
     const r = spawnSync(
       "gh",
       [
@@ -160,10 +170,10 @@ function postOrUpdateTrackingComment(spec, body) {
         "--method",
         "PATCH",
         `repos/${spec.base_repo}/issues/comments/${id}`,
-        "-f",
-        `body=${body}`,
+        "-F",
+        "body=@-",
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", input: body },
     );
     if (r.status !== 0) {
       throw new Error(`gh api PATCH failed: ${r.stderr?.trim() || ""}`);
