@@ -80,6 +80,10 @@ Before opening AI-authored PRs from Codex web sessions or Linear-launched implem
 
 This checklist is required for remote agents because OpenHuman has several merge gates that are easy to miss in partial environments: Prettier, Rust formatting, TypeScript typecheck, focused Vitest coverage, controller dispatch parity, and Tauri vendored dependency availability. If a command cannot run in the remote environment, the PR body must report the exact blocked command and error instead of claiming validation passed.
 
+### Cursor Cloud Agents (parallel batches)
+
+For parallel batches of 15-20 Cursor Cloud Agents, follow [`docs/agent-workflows/cursor-cloud-agents.md`](docs/agent-workflows/cursor-cloud-agents.md). It defines the pilot-then-scale order, per-lane ownership boundaries (so 15+ agents do not collide on the same files), the launch trigger format, secrets posture for agent containers, and the operator dashboard for tracking the batch. The per-agent preflight, branch/PR rules, and merge gates reuse the Codex checklist above.
+
 ### Agent debug runners (`scripts/debug/`)
 
 Use these wrappers instead of invoking Vitest / WDIO / cargo directly when iterating — they keep stdout summary-sized and tee full output to `target/debug-logs/<kind>-<suffix>-<timestamp>.log`. Add `--verbose` to also stream raw output. See [`scripts/debug/README.md`](scripts/debug/README.md).
