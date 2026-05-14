@@ -8,10 +8,10 @@ Use this document for any cloud agent that opens OpenHuman PRs from a Cursor rem
 
 ## Pilot vs. scaled batch
 
-| Stage | Concurrency | Purpose | Exit criteria |
-| --- | --- | --- | --- |
-| **Pilot** | 3-5 agents | Validate the control loop on real issues. | All pilot PRs reach CI green or are explicitly closed with a recorded reason. No two pilot agents touched the same file. |
-| **Scaled batch** | 15-20 agents | Steady-state parallel execution once the pilot has shipped at least one merged PR per ownership lane. | Operator dashboard (see below) shows every agent in a terminal state (merged, closed, blocked) within the batch window. |
+| Stage            | Concurrency  | Purpose                                                                                               | Exit criteria                                                                                                            |
+| ---------------- | ------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Pilot**        | 3-5 agents   | Validate the control loop on real issues.                                                             | All pilot PRs reach CI green or are explicitly closed with a recorded reason. No two pilot agents touched the same file. |
+| **Scaled batch** | 15-20 agents | Steady-state parallel execution once the pilot has shipped at least one merged PR per ownership lane. | Operator dashboard (see below) shows every agent in a terminal state (merged, closed, blocked) within the batch window.  |
 
 Always run a pilot before scaling. A scaled batch that skips the pilot has no baseline for collision rate, CI flakiness, or secrets posture, and the recovery cost is much higher than the wait.
 
@@ -83,17 +83,17 @@ The most common failure for 15-20 parallel agents is two agents touching the sam
 
 Issues are partitioned into lanes before launch. An agent is assigned exactly one lane; lanes do not overlap.
 
-| Lane | Owned paths | Typical work |
-| --- | --- | --- |
-| `frontend-ui` | `app/src/components/`, `app/src/screens/`, `app/src/styles/` | React/Tailwind UI |
-| `frontend-state` | `app/src/store/`, `app/src/services/`, `app/src/lib/` (excluding `app/src/lib/mcp/`) | Redux slices, API clients, hooks |
-| `frontend-mcp` | `app/src/lib/mcp/` | JSON-RPC transport / validation |
-| `tauri-shell` | `app/src-tauri/src/` | IPC, window management, core process lifecycle |
-| `rust-core/<domain>` | `src/openhuman/<domain>/` for one specific domain | One domain at a time (`memory`, `cron`, `skills`, `channels`, `webhooks`, ...) |
-| `rust-core-server` | `src/core/`, `src/rpc/` | Transport, dispatch, controller registry plumbing |
-| `tests` | `tests/`, `app/test/`, `app/src/test/` | Test-only additions / fixes |
-| `docs` | `gitbooks/`, `docs/`, `README.md`, `AGENTS.md`, `CLAUDE.md` | Documentation only |
-| `ci-config` | `.github/workflows/`, `.github/actions/`, `scripts/` | CI workflows, repo scripts |
+| Lane                 | Owned paths                                                                          | Typical work                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `frontend-ui`        | `app/src/components/`, `app/src/screens/`, `app/src/styles/`                         | React/Tailwind UI                                                              |
+| `frontend-state`     | `app/src/store/`, `app/src/services/`, `app/src/lib/` (excluding `app/src/lib/mcp/`) | Redux slices, API clients, hooks                                               |
+| `frontend-mcp`       | `app/src/lib/mcp/`                                                                   | JSON-RPC transport / validation                                                |
+| `tauri-shell`        | `app/src-tauri/src/`                                                                 | IPC, window management, core process lifecycle                                 |
+| `rust-core/<domain>` | `src/openhuman/<domain>/` for one specific domain                                    | One domain at a time (`memory`, `cron`, `skills`, `channels`, `webhooks`, ...) |
+| `rust-core-server`   | `src/core/`, `src/rpc/`                                                              | Transport, dispatch, controller registry plumbing                              |
+| `tests`              | `tests/`, `app/test/`, `app/src/test/`                                               | Test-only additions / fixes                                                    |
+| `docs`               | `gitbooks/`, `docs/`, `README.md`, `AGENTS.md`, `CLAUDE.md`                          | Documentation only                                                             |
+| `ci-config`          | `.github/workflows/`, `.github/actions/`, `scripts/`                                 | CI workflows, repo scripts                                                     |
 
 Rules:
 

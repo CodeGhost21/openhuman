@@ -8,14 +8,14 @@ This file orients contributors and coding agents. Authoritative narrative archit
 
 ## Repository layout
 
-| Path                    | Role                                                                                                                                                                                                        |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`app/`**              | Yarn workspace **`openhuman-app`**: Vite + React (`app/src/`), Tauri desktop host (`app/src-tauri/`), Vitest tests                                                                                          |
-| **Repo root `src/`**    | Rust library **`openhuman_core`** and **`openhuman-core`** CLI binary entrypoint (`src/main.rs`) — `core_server`, `openhuman::*` domains, skills runtime (QuickJS / `rquickjs`), MCP routing in the core process |
-| **Skills registry**     | **[`tinyhumansai/openhuman-skills`](https://github.com/tinyhumansai/openhuman-skills)** on GitHub — canonical skill packages and TS build; not vendored in this tree (see blurb below).                     |
-| **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman-core` produces the sidecar the UI stages via `app`’s `core:stage`                                                                                                  |
-| **`docs/`**             | Architecture and deep-internal references                                                                                                                                                                    |
-| **`gitbooks/developing/`** | Public contributor docs — frontend, Tauri shell, testing, release, skills                                                                                                                                |
+| Path                       | Role                                                                                                                                                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`app/`**                 | Yarn workspace **`openhuman-app`**: Vite + React (`app/src/`), Tauri desktop host (`app/src-tauri/`), Vitest tests                                                                                               |
+| **Repo root `src/`**       | Rust library **`openhuman_core`** and **`openhuman-core`** CLI binary entrypoint (`src/main.rs`) — `core_server`, `openhuman::*` domains, skills runtime (QuickJS / `rquickjs`), MCP routing in the core process |
+| **Skills registry**        | **[`tinyhumansai/openhuman-skills`](https://github.com/tinyhumansai/openhuman-skills)** on GitHub — canonical skill packages and TS build; not vendored in this tree (see blurb below).                          |
+| **`Cargo.toml`** (root)    | Core crate; `cargo build --bin openhuman-core` produces the sidecar the UI stages via `app`’s `core:stage`                                                                                                       |
+| **`docs/`**                | Architecture and deep-internal references                                                                                                                                                                        |
+| **`gitbooks/developing/`** | Public contributor docs — frontend, Tauri shell, testing, release, skills                                                                                                                                        |
 
 Commands in documentation assume the **repo root** unless noted: `pnpm dev` runs the `app` workspace.
 
@@ -175,6 +175,7 @@ curl -s http://127.0.0.1:18473/__admin/health
 Full guide: [`gitbooks/developing/e2e-testing.md`](gitbooks/developing/e2e-testing.md).
 
 Two automation backends:
+
 - **Linux (CI default)**: `tauri-driver` (WebDriver, port 4444) — drives the debug binary directly
 - **macOS (local dev)**: Appium Mac2 (XCUITest, port 4723) — drives the `.app` bundle
 
@@ -341,29 +342,30 @@ A typed pub/sub event bus for **decoupled cross-module communication** plus a **
 
 **Core types** (all in `src/core/event_bus/`):
 
-| Type | File | Purpose |
-|------|------|---------|
-| `DomainEvent` | `events.rs` | `#[non_exhaustive]` enum — all cross-module events live here, grouped by domain |
-| `EventBus` | `bus.rs` | Singleton backed by `tokio::sync::broadcast`. Construction is `pub(crate)` — tests only |
+| Type                                    | File                | Purpose                                                                                                                                                                      |
+| --------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DomainEvent`                           | `events.rs`         | `#[non_exhaustive]` enum — all cross-module events live here, grouped by domain                                                                                              |
+| `EventBus`                              | `bus.rs`            | Singleton backed by `tokio::sync::broadcast`. Construction is `pub(crate)` — tests only                                                                                      |
 | `NativeRegistry` / `NativeRequestError` | `native_request.rs` | In-process typed request/response registry keyed by method name. Rust types only — passes trait objects, `mpsc::Sender`, and `oneshot::Sender` through without serialization |
-| `EventHandler` | `subscriber.rs` | Async trait with optional `domains()` filter for selective subscription |
-| `SubscriptionHandle` | `subscriber.rs` | RAII handle — subscriber task is cancelled on drop |
-| `TracingSubscriber` | `tracing.rs` | Built-in debug logger for all events (registered at startup) |
+| `EventHandler`                          | `subscriber.rs`     | Async trait with optional `domains()` filter for selective subscription                                                                                                      |
+| `SubscriptionHandle`                    | `subscriber.rs`     | RAII handle — subscriber task is cancelled on drop                                                                                                                           |
+| `TracingSubscriber`                     | `tracing.rs`        | Built-in debug logger for all events (registered at startup)                                                                                                                 |
 
 **Singleton API** (all modules use these — never hold or pass `EventBus` / `NativeRegistry` instances):
 
-| Function | Purpose |
-|----------|---------|
-| `event_bus::init_global(capacity)` | Initialize both singletons (broadcast bus + native registry) at startup (once) |
-| `event_bus::publish_global(event)` | Publish a broadcast event from anywhere (no-op if not yet initialized) |
-| `event_bus::subscribe_global(handler)` | Subscribe to broadcast events from anywhere (returns `None` if not yet initialized) |
-| `event_bus::register_native_global(method, handler)` | Register a typed native request handler for a method name — called at startup by each domain's `bus.rs` |
-| `event_bus::request_native_global(method, req)` | Dispatch a typed native request to the registered handler — zero serialization |
-| `event_bus::global()` / `event_bus::native_registry()` | Get the underlying singleton for advanced use |
+| Function                                               | Purpose                                                                                                 |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `event_bus::init_global(capacity)`                     | Initialize both singletons (broadcast bus + native registry) at startup (once)                          |
+| `event_bus::publish_global(event)`                     | Publish a broadcast event from anywhere (no-op if not yet initialized)                                  |
+| `event_bus::subscribe_global(handler)`                 | Subscribe to broadcast events from anywhere (returns `None` if not yet initialized)                     |
+| `event_bus::register_native_global(method, handler)`   | Register a typed native request handler for a method name — called at startup by each domain's `bus.rs` |
+| `event_bus::request_native_global(method, req)`        | Dispatch a typed native request to the registered handler — zero serialization                          |
+| `event_bus::global()` / `event_bus::native_registry()` | Get the underlying singleton for advanced use                                                           |
 
 **Domains:** `agent`, `memory`, `channel`, `cron`, `skill`, `tool`, `webhook`, `system`. See `events.rs` for the full variant list — events carry rich payloads so subscribers have everything they need.
 
 **Domain subscriber files** — each domain owns its `bus.rs` with `EventHandler` impls:
+
 - `cron/bus.rs` — `CronDeliverySubscriber` (delivers job output to channels)
 - `webhooks/bus.rs` — `WebhookRequestSubscriber` (routes incoming requests to skills, emits responses via socket)
 - `channels/bus.rs` — `ChannelInboundSubscriber` (runs agent loop for inbound socket messages)
@@ -378,6 +380,7 @@ A typed pub/sub event bus for **decoupled cross-module communication** plus a **
 5. Publish events with `event_bus::publish_global(DomainEvent::YourEvent { ... })`.
 
 **Example — publishing:**
+
 ```rust
 use crate::core::event_bus::{publish_global, DomainEvent};
 
@@ -390,6 +393,7 @@ publish_global(DomainEvent::CronDeliveryRequested {
 ```
 
 **Example — subscribing (trait-based, in `<domain>/bus.rs`):**
+
 ```rust
 use crate::core::event_bus::{DomainEvent, EventHandler};
 use async_trait::async_trait;
@@ -418,6 +422,7 @@ impl EventHandler for MyDomainSubscriber {
 4. Method name convention: `"<domain>.<verb>"` — same naming scheme as JSON-RPC method roots for consistency, but these are **not** exposed over JSON-RPC.
 
 **Example — native request (typed request/response, in `<domain>/bus.rs`):**
+
 ```rust
 use crate::core::event_bus::{register_native_global, request_native_global};
 use std::sync::Arc;
@@ -542,9 +547,9 @@ _Last aligned with monorepo layout (`app/` + root `src/`), QuickJS skills in `op
 
 Two services run independently for development:
 
-| Service | Start command | Port | Notes |
-|---------|--------------|------|-------|
-| **Vite dev server** | `pnpm dev` (from repo root) | 1420 | React frontend with HMR |
+| Service                  | Start command                         | Port | Notes                                                               |
+| ------------------------ | ------------------------------------- | ---- | ------------------------------------------------------------------- |
+| **Vite dev server**      | `pnpm dev` (from repo root)           | 1420 | React frontend with HMR                                             |
 | **Core JSON-RPC server** | `./target/debug/openhuman-core serve` | 7788 | Rust core, writes bearer token to `~/.openhuman-staging/core.token` |
 
 The app connects to a **remote staging backend** at `https://staging-api.tinyhumans.ai` — there is no local backend to run.
@@ -593,6 +598,7 @@ cargo tauri dev -- -- --no-sandbox
 ```
 
 Key requirements:
+
 - `--no-sandbox` is required because Chromium refuses to run as root without it.
 - `LD_LIBRARY_PATH` must include the CEF distribution directory so `libcef.so` is found at runtime.
 - The vendored CEF-aware `cargo-tauri` must be installed first via `bash scripts/ensure-tauri-cli.sh`.
@@ -607,7 +613,6 @@ Key requirements:
 - `pnpm test:unit` does not exist at the root level; use `pnpm test` instead (which delegates to `vitest run` in the `app` workspace).
 - The Tauri shell `cargo check` requires GTK/desktop system libraries; without them, the pre-push hook's `pnpm rust:check` will fail. Use `--no-verify` on push if GTK libs are missing and the change is unrelated to the Tauri shell.
 
-
 <claude-mem-context>
 # Memory Context
 
@@ -620,6 +625,7 @@ Fetch details: get_observations([IDs]) | Search: mem-search skill
 Stats: 20 obs (8,333t read) | 593,112t work | 99% savings
 
 ### Apr 22, 2026
+
 2848 9:07a ✅ openhuman: All Three Review Branches Pushed to Fork Successfully
 2849 " 🔵 openhuman review-daemon-lifecycle: Two Post-Push Issues — Unstaged Prettier Changes + Missing tauri-cef Vendor
 2851 9:08a ✅ openhuman daemon lifecycle: Prettier Format Committed as Follow-Up
