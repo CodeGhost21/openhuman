@@ -19,6 +19,15 @@ describe('tauriCommands', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mockIsTauri.mockReturnValue(true);
+    // The local `isTauri()` wrapper in `tauriCommands/common.ts` ALSO checks
+    // `window.__TAURI_INTERNALS__.invoke` to detect the CEF bootstrap gap
+    // (see OPENHUMAN-REACT-S). Mocking only the upstream `coreIsTauri`
+    // isn't enough — the wrapper would still return false in tests and
+    // every helper would hit its `if (!isTauri()) return;` early-exit.
+    // Stub a minimal internals shape so the wrapper resolves to true.
+    (window as unknown as { __TAURI_INTERNALS__?: { invoke: unknown } }).__TAURI_INTERNALS__ = {
+      invoke: () => undefined,
+    };
     const actual = await vi.importActual<typeof import('../tauriCommands')>('../tauriCommands');
     getAuthState = actual.getAuthState;
     resetOpenHumanDataAndRestartCore = actual.resetOpenHumanDataAndRestartCore;
@@ -50,8 +59,15 @@ describe('tauriCommands', () => {
   test('resetOpenHumanDataAndRestartCore invokes the destructive Tauri command', async () => {
     await resetOpenHumanDataAndRestartCore();
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.config_reset_local_data' });
-    expect(mockInvoke).toHaveBeenCalledWith('restart_core_process');
+    // The helper used to call `openhuman.config_reset_local_data` over
+    // JSON-RPC followed by `restart_core_process`, but the in-process
+    // remove failed on Windows when the running core held open handles
+    // inside the data directory (OPENHUMAN-TAURI-AF). The Tauri shell
+    // now owns the full sequence (stop core → remove paths → restart
+    // core) behind a single `reset_local_data` command, so no core RPC
+    // call should reach `callCoreRpc` from this helper.
+    expect(mockCallCoreRpc).not.toHaveBeenCalled();
+    expect(mockInvoke).toHaveBeenCalledWith('reset_local_data');
   });
 
   test('openhumanLocalAiStatus returns upgrade hint on unknown method', async () => {
