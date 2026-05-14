@@ -3038,4 +3038,76 @@ mod tests {
             "messages that merely contain the dev-proxy prefix must NOT be filtered"
         );
     }
+
+    // -------------------------------------------------------------------------
+    // path_has_executable / deep-link xdg-mime pre-flight (OPENHUMAN-TAURI-AS)
+    // -------------------------------------------------------------------------
+
+    /// With a controlled `$PATH` containing one dir that holds a file named
+    /// `xdg-mime`, the lookup must succeed (mirrors a Linux desktop install
+    /// where xdg-utils ships the binary).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_finds_file_on_path() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("xdg-mime"), b"#!/bin/sh\n").expect("write stub");
+        std::env::set_var("PATH", dir.path());
+
+        assert!(
+            path_has_executable("xdg-mime"),
+            "must discover xdg-mime when present in a $PATH entry"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    /// With a controlled `$PATH` that does NOT contain `xdg-mime`, the lookup
+    /// must fail (mirrors WSL2 / minimal containers without xdg-utils — the
+    /// case OPENHUMAN-TAURI-AS protects against).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_returns_false_when_missing() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Intentionally do not create xdg-mime in `dir`.
+        std::env::set_var("PATH", dir.path());
+
+        assert!(
+            !path_has_executable("xdg-mime"),
+            "must return false when xdg-mime is not in any $PATH entry"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+
+    /// When `$PATH` is unset entirely, the lookup must short-circuit to false
+    /// rather than panic or fall back to the cwd.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn path_has_executable_returns_false_when_path_unset() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("PATH");
+
+        std::env::remove_var("PATH");
+        assert!(
+            !path_has_executable("xdg-mime"),
+            "unset $PATH must yield false (skip register_all on the missing-xdg-utils branch)"
+        );
+
+        match original {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+    }
 }
