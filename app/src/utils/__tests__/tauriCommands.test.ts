@@ -82,6 +82,21 @@ describe('tauriCommands', () => {
     expect(mockInvoke).toHaveBeenCalledWith('reset_local_data');
   });
 
+  test('resetOpenHumanDataAndRestartCore surfaces invoke failures to the caller', async () => {
+    // Callers (e.g. `clearAllAppData`) treat a thrown error as unrecoverable
+    // and abort the flow — so the helper must rethrow instead of swallowing
+    // a `reset_local_data` failure (e.g. Windows `ERROR_SHARING_VIOLATION`
+    // when a handle outside the embedded core still holds a path).
+    const boom = new Error('reset_local_data failed');
+    mockInvoke.mockRejectedValueOnce(boom);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(resetOpenHumanDataAndRestartCore()).rejects.toBe(boom);
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+  });
+
   test('openhumanLocalAiStatus returns upgrade hint on unknown method', async () => {
     mockCallCoreRpc.mockRejectedValueOnce(new Error('unknown method: openhuman.local_ai_status'));
 
