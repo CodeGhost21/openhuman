@@ -162,7 +162,8 @@ impl ComposioClient {
         if tool.is_empty() {
             anyhow::bail!("composio.execute_tool_once: tool slug must not be empty");
         }
-        let arguments = arguments.unwrap_or(serde_json::Value::Object(Default::default()));
+        let arguments = super::execute_prepare::prepare_execute_arguments(tool, arguments)
+            .map_err(anyhow::Error::msg)?;
         tracing::debug!(tool = %tool, "[composio] execute_tool_once (no built-in retry)");
         let body = json!({ "tool": tool, "arguments": arguments });
         let result = self.post_execute_tool(&body).await;
@@ -179,7 +180,12 @@ impl ComposioClient {
                 "[composio] execute_tool_once failed"
             ),
         }
-        result
+        result.map_err(|e| {
+            anyhow::Error::msg(super::error_mapping::remap_transport_error(
+                tool,
+                &e.to_string(),
+            ))
+        })
     }
 
     /// `POST /agent-integrations/composio/execute` — run a Composio
@@ -193,11 +199,19 @@ impl ComposioClient {
         if tool.is_empty() {
             anyhow::bail!("composio.execute_tool: tool slug must not be empty");
         }
-        let arguments = arguments.unwrap_or(serde_json::Value::Object(Default::default()));
+        let arguments = super::execute_prepare::prepare_execute_arguments(tool, arguments)
+            .map_err(anyhow::Error::msg)?;
         tracing::debug!(tool = %tool, "[composio] execute_tool");
         let body = json!({ "tool": tool, "arguments": arguments });
-        self.execute_tool_with_post_oauth_retry(tool, &body, POST_OAUTH_ACTION_RETRY_DELAY)
-            .await
+        let mut resp = self
+            .execute_tool_with_post_oauth_retry(tool, &body, POST_OAUTH_ACTION_RETRY_DELAY)
+            .await?;
+        if !resp.successful {
+            if let Some(ref err) = resp.error {
+                resp.error = Some(super::error_mapping::format_provider_error(tool, err));
+            }
+        }
+        Ok(resp)
     }
 
     async fn execute_tool_with_post_oauth_retry(

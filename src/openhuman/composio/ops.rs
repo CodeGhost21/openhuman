@@ -230,7 +230,7 @@ pub async fn composio_execute(
     tracing::debug!(tool = %tool, "[composio] rpc execute");
     let client = resolve_client(config)?;
     let started = std::time::Instant::now();
-    let result = client.execute_tool(tool, arguments).await;
+    let result = super::execute_dispatch::execute_composio_action(&client, tool, arguments).await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     match result {
@@ -265,7 +265,7 @@ pub async fn composio_execute(
                     elapsed_ms,
                 },
             );
-            Err(format!("[composio] execute failed: {e:#}"))
+            Err(format!("[composio] execute failed: {e}"))
         }
     }
 }

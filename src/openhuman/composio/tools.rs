@@ -697,10 +697,11 @@ impl Tool for ComposioExecuteTool {
         }
 
         let started = std::time::Instant::now();
-        let res = super::auth_retry::execute_with_auth_retry(&self.client, &tool, arguments).await;
+        let res =
+            super::execute_dispatch::execute_composio_action(&self.client, &tool, arguments).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match res {
-            Ok(mut resp) => {
+            Ok(resp) => {
                 crate::core::event_bus::publish_global(
                     crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                         tool: tool.clone(),
@@ -740,7 +741,7 @@ impl Tool for ComposioExecuteTool {
                         elapsed_ms,
                     },
                 );
-                Ok(ToolResult::error(format!("composio_execute failed: {e}")))
+                Ok(ToolResult::error(e))
             }
         }
     }

@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatTriggerLabel } from './formatters';
+import { formatComposioToolError, formatTriggerLabel } from './formatters';
+
+describe('formatComposioToolError', () => {
+  it('strips the classified prefix and returns the body', () => {
+    const raw =
+      '[composio:error:insufficient_scope] `GMAIL_FETCH_EMAILS` was rejected because the connected gmail account is missing required permissions.';
+    expect(formatComposioToolError(raw)).toContain('missing required permissions');
+    expect(formatComposioToolError(raw)).not.toContain('[composio:error:');
+  });
+
+  it('passes through unclassified messages', () => {
+    expect(formatComposioToolError('plain failure')).toBe('plain failure');
+  });
+});
 
 describe('formatTriggerLabel', () => {
   it('formats GOOGLECALENDAR_GOOGLE_CALENDAR_EVENT_CREATED_TRIGGER correctly', () => {
