@@ -703,7 +703,9 @@ async fn execute_tool_surfaces_non_successful_provider_response() {
     );
     let base = start_mock_backend(app).await;
     let client = build_client_for(base);
-    let resp = client.execute_tool("GMAIL_SEND_EMAIL", None).await.unwrap();
+    // Use a slug that bypasses local arg validation in `execute_prepare`
+    // so the test exercises the gateway-response path, not the pre-flight.
+    let resp = client.execute_tool("ANY_TOOL", None).await.unwrap();
     assert!(
         !resp.successful,
         "non-successful provider response must be surfaced via the successful flag"

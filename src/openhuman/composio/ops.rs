@@ -265,7 +265,14 @@ pub async fn composio_execute(
                     elapsed_ms,
                 },
             );
-            Err(format!("[composio] execute failed: {e}"))
+            // Preserve already-classified errors from the dispatcher
+            // (`[composio:error:<class>] …`) so the frontend formatter at
+            // `app/src/lib/composio/formatters.ts` can still parse the class.
+            if e.starts_with("[composio:error:") {
+                Err(e)
+            } else {
+                Err(format!("[composio] execute failed: {e}"))
+            }
         }
     }
 }

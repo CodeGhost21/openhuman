@@ -32,29 +32,31 @@ impl ComposioErrorClass {
 
 pub fn classify_composio_error(tool: &str, message: &str) -> ComposioErrorClass {
     let lower = message.to_ascii_lowercase();
-    if is_validation_shape(&lower) {
-        return ComposioErrorClass::Validation;
-    }
-    if is_insufficient_scope_shape(&lower) {
-        return ComposioErrorClass::InsufficientScope;
-    }
-    if is_rate_limited_shape(&lower) {
-        return ComposioErrorClass::RateLimited;
-    }
-    if is_gateway_transport_shape(&lower) && !is_embedded_provider_failure(&lower) {
-        return ComposioErrorClass::Gateway;
-    }
-    if is_composio_platform_shape(&lower) {
-        return ComposioErrorClass::ComposioPlatform;
-    }
-    if tool.starts_with("GMAIL_")
+    let class = if is_validation_shape(&lower) {
+        ComposioErrorClass::Validation
+    } else if is_insufficient_scope_shape(&lower) {
+        ComposioErrorClass::InsufficientScope
+    } else if is_rate_limited_shape(&lower) {
+        ComposioErrorClass::RateLimited
+    } else if is_gateway_transport_shape(&lower) && !is_embedded_provider_failure(&lower) {
+        ComposioErrorClass::Gateway
+    } else if is_composio_platform_shape(&lower) {
+        ComposioErrorClass::ComposioPlatform
+    } else if tool.starts_with("GMAIL_")
         || tool.starts_with("SLACK_")
         || tool.starts_with("NOTION_")
         || tool.starts_with("GOOGLECALENDAR_")
     {
-        return ComposioErrorClass::UpstreamProvider;
-    }
-    ComposioErrorClass::Other
+        ComposioErrorClass::UpstreamProvider
+    } else {
+        ComposioErrorClass::Other
+    };
+    tracing::debug!(
+        tool = %tool,
+        class = class.as_str(),
+        "[composio][classify] error classified"
+    );
+    class
 }
 
 pub fn format_provider_error(tool: &str, raw: &str) -> String {

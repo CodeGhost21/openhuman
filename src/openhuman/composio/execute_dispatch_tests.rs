@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use axum::{routing::post, Json, Router};
 use serde_json::json;
-use tokio::sync::oneshot;
 
 use super::execute_composio_action;
 use crate::openhuman::composio::client::ComposioClient;
@@ -12,16 +11,13 @@ use crate::openhuman::integrations::IntegrationClient;
 async fn start_mock_backend(app: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let (tx, rx) = oneshot::channel::<()>();
+    // The spawned task is intentionally orphaned; it dies with the tokio
+    // runtime when the test finishes. The previous oneshot-based graceful
+    // shutdown was broken because the sender was dropped immediately,
+    // signalling shutdown before the test could exercise the server.
     tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = rx.await;
-            })
-            .await
-            .unwrap();
+        let _ = axum::serve(listener, app).await;
     });
-    drop(tx);
     format!("http://{addr}")
 }
 

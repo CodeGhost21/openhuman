@@ -28,6 +28,7 @@ pub async fn execute_composio_action(
         Err(msg) => {
             tracing::debug!(
                 tool = %tool,
+                error = %msg,
                 "[composio][prepare] local validation rejected execute"
             );
             return Err(format_provider_error(tool, &msg));
@@ -81,6 +82,10 @@ async fn execute_with_retries(
         }
 
         let err_text = resp.error.as_deref().unwrap_or("");
+        // Only Slack's conversations.history is allow-listed for transparent
+        // rate-limit retries today: it surfaces 429s on bursty agent reads and
+        // has stable retry semantics. Other tools surface 429 to the caller
+        // (formatted as `[composio:error:rate_limited]`) instead of stalling.
         if tool == SLACK_HISTORY && is_rate_limited(err_text) && attempt < RATELIMIT_MAX_ATTEMPTS {
             tracing::warn!(
                 tool = %tool,

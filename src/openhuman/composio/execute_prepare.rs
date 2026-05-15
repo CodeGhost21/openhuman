@@ -58,7 +58,10 @@ fn normalize_rfc3339_bound(value: &Value) -> Option<String> {
     if s.contains('T') {
         return Some(s.to_string());
     }
-    if s.len() == 10 && s.as_bytes().get(4) == Some(&b'-') && s.as_bytes().get(7) == Some(&b'-') {
+    // A bare date like `2026-05-14` is promoted to RFC 3339 midnight UTC.
+    // Parse explicitly so impossible dates such as `2026-99-99` are rejected
+    // up front instead of being passed through to Google Calendar.
+    if chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok() {
         return Some(format!("{s}T00:00:00Z"));
     }
     None
