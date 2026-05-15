@@ -13,6 +13,46 @@ describe('formatComposioToolError', () => {
   it('passes through unclassified messages', () => {
     expect(formatComposioToolError('plain failure')).toBe('plain failure');
   });
+
+  it('returns empty string for null/undefined/empty input', () => {
+    expect(formatComposioToolError(null)).toBe('');
+    expect(formatComposioToolError(undefined)).toBe('');
+    expect(formatComposioToolError('')).toBe('');
+  });
+
+  it('falls back to validation copy when body is empty', () => {
+    expect(formatComposioToolError('[composio:error:validation]')).toBe('Invalid tool arguments.');
+  });
+
+  it('falls back to insufficient_scope copy when body is empty', () => {
+    expect(formatComposioToolError('[composio:error:insufficient_scope]')).toBe(
+      'Reconnect this integration and grant the requested permissions.'
+    );
+  });
+
+  it('falls back to rate_limited copy when body is empty', () => {
+    expect(formatComposioToolError('[composio:error:rate_limited]')).toBe(
+      'The upstream service is rate-limiting requests. Try again shortly.'
+    );
+  });
+
+  it('falls back to gateway copy when body is empty', () => {
+    expect(formatComposioToolError('[composio:error:gateway]')).toBe(
+      'Temporary connection issue. Try again in a moment.'
+    );
+  });
+
+  it('returns body for unknown class when present', () => {
+    expect(formatComposioToolError('[composio:error:something_new] details here')).toBe(
+      'details here'
+    );
+  });
+
+  it('falls back to trimmed raw for unknown class with empty body', () => {
+    expect(formatComposioToolError('  [composio:error:something_new]  ')).toBe(
+      '[composio:error:something_new]'
+    );
+  });
 });
 
 describe('formatTriggerLabel', () => {
