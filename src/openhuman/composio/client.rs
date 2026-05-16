@@ -203,6 +203,13 @@ impl ComposioClient {
         if tool.is_empty() {
             anyhow::bail!("composio.execute_tool: tool slug must not be empty");
         }
+        // PR #1827 routes all execute-side argument normalization
+        // (including the bare-date → RFC 3339 fix #1802 brought to
+        // `normalize_calendar_query_args` on `main`) through the
+        // centralized `prepare_execute_arguments` helper. The helper
+        // covers the same calendar query case and is the shared entry
+        // point for `composio_execute`, per-action tools, and direct-
+        // mode dispatch.
         let arguments = super::execute_prepare::prepare_execute_arguments(tool, arguments)
             .map_err(anyhow::Error::msg)?;
         tracing::debug!(tool = %tool, "[composio] execute_tool");

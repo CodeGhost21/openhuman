@@ -856,6 +856,12 @@ async fn execute_tool_sends_tool_slug_in_request_body() {
         "tool slug must be forwarded in request body"
     );
 }
+// Calendar bare-date → RFC 3339 normalization is now covered by
+// `execute_prepare::prepare_execute_arguments` (PR #1827); see
+// `execute_prepare_tests.rs` for the equivalent test surface that
+// supersedes the per-slug `normalize_calendar_query_args` helper
+// removed alongside the upstream-main merge.
+
 // ── Factory tests (`create_composio_client`) ────────────────────────
 //
 // Mirror the four branches the spec demands:
