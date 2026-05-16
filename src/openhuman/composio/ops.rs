@@ -621,7 +621,14 @@ pub async fn composio_execute(
             // Preserve already-classified errors from the dispatcher
             // (`[composio:error:<class>] …`) so the frontend formatter at
             // `app/src/lib/composio/formatters.ts` can still parse the class.
-            if e.starts_with("[composio:error:") {
+            let is_classified = e.starts_with("[composio:error:");
+            tracing::debug!(
+                tool = %tool,
+                elapsed_ms,
+                classified = is_classified,
+                "[composio] rpc execute error mapped"
+            );
+            if is_classified {
                 Err(e)
             } else {
                 Err(format!("[composio] execute failed: {e}"))

@@ -37,11 +37,22 @@ pub(super) fn handle_sio_event(
         event_name,
         payload.len()
     );
-    let preview_end = crate::openhuman::util::floor_char_boundary(&payload, 500);
+    // CodeRabbit #3250222027: even at debug level, raw bodies can leak
+    // PII / secrets / tokens. Log structural metadata (top-level shape +
+    // byte length) but never the raw text.
+    let payload_shape = match &data {
+        serde_json::Value::Object(map) => format!("object_keys={}", map.len()),
+        serde_json::Value::Array(arr) => format!("array_len={}", arr.len()),
+        serde_json::Value::String(_) => "string".to_string(),
+        serde_json::Value::Number(_) => "number".to_string(),
+        serde_json::Value::Bool(_) => "bool".to_string(),
+        serde_json::Value::Null => "null".to_string(),
+    };
     log::debug!(
-        "[socket] event payload: name={} data={}",
+        "[socket] event payload: name={} data_bytes={} shape={} preview_omitted=true",
         event_name,
-        &payload[..preview_end]
+        payload.len(),
+        payload_shape
     );
     log::debug!("[socket] event dispatch: name={}", event_name);
 
