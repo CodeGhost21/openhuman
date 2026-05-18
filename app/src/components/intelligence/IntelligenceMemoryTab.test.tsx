@@ -85,32 +85,36 @@ describe('<IntelligenceMemoryTab />', () => {
 
   it('renders the loading state when itemsLoading and no memory data yet', () => {
     renderTab({ itemsLoading: true });
-    // Loading state shows the loading heading (i18n falls back to key).
-    expect(screen.getByRole('heading', { level: 2 })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: /Loading Memory/i })
+    ).toBeInTheDocument();
   });
 
   it('renders the analyzing state when isRunning and items are empty', () => {
     renderTab({ isRunning: true });
-    expect(screen.getByRole('heading', { level: 2 })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: /Analyzing Memory/i })
+    ).toBeInTheDocument();
   });
 
-  it('renders the analyze-now button when no analysis has run yet', () => {
-    renderTab({ usingMemoryData: false });
-    const btn = screen.getByRole('button');
-    fireEvent.click(btn);
-    // handleAnalyzeNow runs via `void` — assert it was scheduled at least once.
-    expect(btn).toBeInTheDocument();
+  it('invokes handleAnalyzeNow when the Analyze Now button is clicked', () => {
+    const { handleAnalyzeNow } = renderTab({ usingMemoryData: false });
+    fireEvent.click(screen.getByRole('button', { name: /Analyze Now/i }));
+    expect(handleAnalyzeNow).toHaveBeenCalledTimes(1);
   });
 
   it('renders the no-matches state when filters are active and groups are empty', () => {
     renderTab({ searchFilter: 'foo', sourceFilter: 'email' });
-    // The heading branch chosen is "memory.noMatches" — assert any heading renders.
-    expect(screen.getByRole('heading', { level: 2 })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: /No Matches Found/i })
+    ).toBeInTheDocument();
   });
 
   it('renders the all-caught-up state when usingMemoryData and no groups', () => {
     renderTab({ usingMemoryData: true });
-    expect(screen.getByRole('heading', { level: 2 })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 2, name: /All Caught Up/i })
+    ).toBeInTheDocument();
   });
 
   it('renders time-group sections with their items', () => {

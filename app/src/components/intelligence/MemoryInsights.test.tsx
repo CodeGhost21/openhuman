@@ -84,12 +84,10 @@ describe('<MemoryInsights />', () => {
     const relations = Array.from({ length: 8 }, (_, i) =>
       makeRel({ subject: `S${i}`, predicate: 'is', object: 'thing', evidenceCount: i + 1 })
     );
-    const { container } = render(<MemoryInsights relations={relations} />);
+    render(<MemoryInsights relations={relations} />);
 
-    // Click the only category header (facts).
-    const headerBtn = container.querySelector('button');
-    expect(headerBtn).not.toBeNull();
-    fireEvent.click(headerBtn!);
+    // Click the (only) category header — i18n key "insights.knownFacts".
+    fireEvent.click(screen.getByRole('button', { name: /Known Facts/i }));
 
     // After expansion the "+N more" hint disappears and all subjects become visible.
     expect(screen.queryByText(/^\+/)).not.toBeInTheDocument();
@@ -108,8 +106,9 @@ describe('<MemoryInsights />', () => {
       }),
     ];
     render(<MemoryInsights relations={relations} />);
-    // Badges render the type label uppercased via CSS class — assert via text content.
+    // The badge renders as a child of the subject span; query inside it
+    // rather than reaching up to the row container.
     const subj = screen.getByText('Alice');
-    expect(within(subj.parentElement as HTMLElement).getByText(/person/i)).toBeInTheDocument();
+    expect(within(subj).getByText(/person/i)).toBeInTheDocument();
   });
 });

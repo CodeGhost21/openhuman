@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { MemoryStatsBar } from './MemoryStatsBar';
 
@@ -58,16 +58,24 @@ describe('<MemoryStatsBar />', () => {
   });
 
   it('renders a relative time-ago when oldest/newest timestamps are provided', () => {
-    const now = Math.floor(Date.now() / 1000);
-    render(
-      <MemoryStatsBar
-        {...BASE_PROPS}
-        oldestDocTimestamp={now - 3600 * 5} // 5h ago
-        newestDocTimestamp={now - 60 * 10} // 10m ago
-      />
-    );
-    expect(screen.getByText('5h ago')).toBeInTheDocument();
-    expect(screen.getByText(/10m ago/)).toBeInTheDocument();
+    // Freeze the clock so the relative offsets resolve to exactly "5h ago"
+    // and "10m ago" regardless of when the suite runs.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-04T12:00:00.000Z'));
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      render(
+        <MemoryStatsBar
+          {...BASE_PROPS}
+          oldestDocTimestamp={now - 3600 * 5} // 5h ago
+          newestDocTimestamp={now - 60 * 10} // 10m ago
+        />
+      );
+      expect(screen.getByText('5h ago')).toBeInTheDocument();
+      expect(screen.getByText(/10m ago/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows a skeleton placeholder when loading', () => {

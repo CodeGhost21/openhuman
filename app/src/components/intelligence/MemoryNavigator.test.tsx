@@ -1,10 +1,15 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Chunk, EntityRef, Source } from '../../utils/tauriCommands';
 import { MemoryNavigator, type NavigatorSelection } from './MemoryNavigator';
 
 const EMPTY_SELECTION: NavigatorSelection = { sourceIds: [], entityIds: [] };
+
+// Freeze the clock so the today/this-week bucket calculations and any
+// `timestamp_ms: Date.now()` defaults are deterministic. Picked a noon-UTC
+// weekday far from a DST boundary to avoid clock-edge surprises.
+const FROZEN_NOW = new Date('2026-03-04T12:00:00.000Z');
 
 function makeChunk(overrides: Partial<Chunk> = {}): Chunk {
   return {
@@ -12,7 +17,7 @@ function makeChunk(overrides: Partial<Chunk> = {}): Chunk {
     source_kind: 'email',
     source_id: 'src-1',
     owner: 'me',
-    timestamp_ms: Date.now(),
+    timestamp_ms: FROZEN_NOW.getTime(),
     token_count: 4,
     lifecycle_status: 'admitted',
     has_embedding: false,
@@ -27,7 +32,7 @@ function makeSource(overrides: Partial<Source> = {}): Source {
     display_name: 'Alice',
     source_kind: 'email',
     chunk_count: 3,
-    most_recent_ms: Date.now(),
+    most_recent_ms: FROZEN_NOW.getTime(),
     ...overrides,
   };
 }
@@ -37,6 +42,15 @@ function makeEntity(overrides: Partial<EntityRef> = {}): EntityRef {
 }
 
 describe('<MemoryNavigator />', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FROZEN_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('renders the search input and dispatches onSearchChange', () => {
     const onSearch = vi.fn();
     render(
@@ -152,7 +166,7 @@ describe('<MemoryNavigator />', () => {
   });
 
   it('counts chunks within today and the rolling 7-day window', () => {
-    const now = Date.now();
+    const now = FROZEN_NOW.getTime();
     const chunks = [
       makeChunk({ id: 'today', timestamp_ms: now }),
       makeChunk({ id: 'week', timestamp_ms: now - 3 * 24 * 60 * 60 * 1000 }),
@@ -169,10 +183,10 @@ describe('<MemoryNavigator />', () => {
         onSearchChange={() => {}}
       />
     );
-    // Both counts render after the effect runs.
-    // today has 1 entry, week has 2 (today + 3 days ago).
-    const text = screen.getByTestId('memory-navigator').textContent ?? '';
-    expect(text).toMatch(/1/);
-    expect(text).toMatch(/2/);
+    // The "recent" section renders "<Today label> <n>" and "<This Week label> <n>"
+    // — assert against those labeled counters, not loose digits.
+    const recent = within(screen.getByTestId('memory-navigator'));
+    expect(recent.getByText(/Today\s+1/i)).toBeInTheDocument();
+    expect(recent.getByText(/This Week\s+2/i)).toBeInTheDocument();
   });
 });

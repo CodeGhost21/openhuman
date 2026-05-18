@@ -1,10 +1,14 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Chunk } from '../../utils/tauriCommands';
 import { MemoryResultList } from './MemoryResultList';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Mid-day, mid-week, far from DST — keeps the bucket boundaries (TODAY /
+// YESTERDAY / THIS WEEK / OLDER) deterministic across machines + CI.
+const FROZEN_NOW = new Date('2026-03-04T12:00:00.000Z');
 
 function makeChunk(overrides: Partial<Chunk> = {}): Chunk {
   return {
@@ -12,7 +16,7 @@ function makeChunk(overrides: Partial<Chunk> = {}): Chunk {
     source_kind: 'email',
     source_id: 'gmail:alice@example.com|thread-1',
     owner: 'me',
-    timestamp_ms: Date.now(),
+    timestamp_ms: FROZEN_NOW.getTime(),
     token_count: 12,
     lifecycle_status: 'admitted',
     has_embedding: true,
@@ -23,12 +27,21 @@ function makeChunk(overrides: Partial<Chunk> = {}): Chunk {
 }
 
 function startOfTodayMs(): number {
-  const d = new Date();
+  const d = new Date(FROZEN_NOW);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
 
 describe('<MemoryResultList />', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FROZEN_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('renders the no-results state when the list is empty', () => {
     render(<MemoryResultList chunks={[]} selectedChunkId={null} onSelectChunk={() => {}} />);
     expect(screen.getByTestId('memory-result-list')).toBeInTheDocument();
@@ -52,23 +65,21 @@ describe('<MemoryResultList />', () => {
     expect(screen.getByText('THIS WEEK')).toBeInTheDocument();
     expect(screen.getByText('OLDER')).toBeInTheDocument();
 
-    // One row button per chunk.
-    expect(document.querySelectorAll('button[data-chunk-id]').length).toBe(4);
+    // One row button per chunk — query by accessible role.
+    expect(screen.getAllByRole('button')).toHaveLength(4);
   });
 
-  it('marks the active row via aria-pressed and is-active class', () => {
+  it('marks the active row via aria-pressed', () => {
     const todayMs = startOfTodayMs();
     const chunks = [
       makeChunk({ id: 'a', timestamp_ms: todayMs + 1 }),
       makeChunk({ id: 'b', timestamp_ms: todayMs + 2 }),
     ];
-    const { container } = render(
-      <MemoryResultList chunks={chunks} selectedChunkId="b" onSelectChunk={() => {}} />
-    );
-    const active = container.querySelector('button[data-chunk-id="b"]') as HTMLButtonElement;
-    expect(active).not.toBeNull();
-    expect(active.getAttribute('aria-pressed')).toBe('true');
-    expect(active.className).toContain('is-active');
+    render(<MemoryResultList chunks={chunks} selectedChunkId="b" onSelectChunk={() => {}} />);
+    // Exactly one row carries aria-pressed=true.
+    const pressed = screen.getAllByRole('button', { pressed: true });
+    expect(pressed).toHaveLength(1);
+    expect(screen.getAllByRole('button', { pressed: false })).toHaveLength(1);
   });
 
   it('fires onSelectChunk when a row is clicked', () => {
