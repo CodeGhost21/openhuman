@@ -85,9 +85,7 @@ describe('<IntelligenceMemoryTab />', () => {
 
   it('renders the loading state when itemsLoading and no memory data yet', () => {
     renderTab({ itemsLoading: true });
-    expect(
-      screen.getByRole('heading', { level: 2, name: /Loading Memory/i })
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: /Loading Memory/i })).toBeInTheDocument();
   });
 
   it('renders the analyzing state when isRunning and items are empty', () => {
@@ -112,9 +110,7 @@ describe('<IntelligenceMemoryTab />', () => {
 
   it('renders the all-caught-up state when usingMemoryData and no groups', () => {
     renderTab({ usingMemoryData: true });
-    expect(
-      screen.getByRole('heading', { level: 2, name: /All Caught Up/i })
-    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: /All Caught Up/i })).toBeInTheDocument();
   });
 
   it('renders time-group sections with their items', () => {

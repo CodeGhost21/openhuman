@@ -11,6 +11,8 @@ describe('<MemoryEmptyPlaceholder />', () => {
     expect(
       within(root).getByRole('heading', { level: 2, name: /No memories yet/i })
     ).toBeInTheDocument();
-    expect(within(root).getByText(/Start interacting to create your first memories/i)).toBeInTheDocument();
+    expect(
+      within(root).getByText(/Start interacting to create your first memories/i)
+    ).toBeInTheDocument();
   });
 });
