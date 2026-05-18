@@ -21,13 +21,18 @@ import { renderWithProviders } from '../src/test/test-utils';
 // Module mocks
 // ---------------------------------------------------------------------------
 
-const { mockGetBackendUrl, mockOpenUrl, mockIsTauri } = vi.hoisted(() => ({
+const { mockGetBackendUrl, mockOpenUrl, mockIsTauri, mockCheckBackendHealthy } = vi.hoisted(() => ({
   mockGetBackendUrl: vi.fn(),
   mockOpenUrl: vi.fn(),
   mockIsTauri: vi.fn(),
+  // Default to a healthy backend so the pre-flight in OAuthProviderButton
+  // (added for issue #1985) doesn't short-circuit the OAuth flow these
+  // tests exercise.
+  mockCheckBackendHealthy: vi.fn().mockResolvedValue({ healthy: true, status: 200, latencyMs: 5 }),
 }));
 
 vi.mock('../src/services/backendUrl', () => ({ getBackendUrl: mockGetBackendUrl }));
+vi.mock('../src/services/backendHealth', () => ({ checkBackendHealthy: mockCheckBackendHealthy }));
 vi.mock('../src/utils/openUrl', () => ({ openUrl: mockOpenUrl }));
 vi.mock('../src/utils/tauriCommands', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>();
