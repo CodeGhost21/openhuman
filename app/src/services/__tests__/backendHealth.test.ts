@@ -3,6 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BACKEND_HEALTH_TIMEOUT_MS, checkBackendHealthy } from '../backendHealth';
 import { getBackendUrl } from '../backendUrl';
 
+// Local explicit mock — overrides the global one in app/src/test/setup.ts so
+// this suite controls `getBackendUrl()` behavior end-to-end (including the
+// rejection case for `resolve-failure`) without depending on the global
+// mock's resolved value.
+vi.mock('../backendUrl', () => ({ getBackendUrl: vi.fn() }));
+
 const mockedGetBackendUrl = vi.mocked(getBackendUrl);
 
 function makeResponse(status: number): Response {
