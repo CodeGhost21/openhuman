@@ -5,9 +5,7 @@ import type { GraphEdge, GraphNode } from '../../utils/tauriCommands';
 import { MemoryGraph } from './MemoryGraph';
 
 const openUrlMock = vi.fn();
-vi.mock('../../utils/openUrl', () => ({
-  openUrl: (...args: unknown[]) => openUrlMock(...args),
-}));
+vi.mock('../../utils/openUrl', () => ({ openUrl: (...args: unknown[]) => openUrlMock(...args) }));
 
 function makeSummaryNode(overrides: Partial<GraphNode> = {}): GraphNode {
   return {
@@ -46,9 +44,7 @@ describe('<MemoryGraph />', () => {
   });
 
   it('renders the empty state when there are no nodes', () => {
-    render(
-      <MemoryGraph nodes={[]} edges={[]} mode="tree" contentRootAbs="/tmp/openhuman" />
-    );
+    render(<MemoryGraph nodes={[]} edges={[]} mode="tree" contentRootAbs="/tmp/openhuman" />);
     expect(screen.getByTestId('memory-graph-empty')).toBeInTheDocument();
   });
 
@@ -72,9 +68,7 @@ describe('<MemoryGraph />', () => {
       makeContactNode({ id: 'person:alice', label: 'Alice' }),
     ];
     const edges: GraphEdge[] = [{ from: 'd1', to: 'person:alice' }];
-    render(
-      <MemoryGraph nodes={nodes} edges={edges} mode="contacts" contentRootAbs="/tmp" />
-    );
+    render(<MemoryGraph nodes={nodes} edges={edges} mode="contacts" contentRootAbs="/tmp" />);
     // Two legend rows render with i18n keys as fallback (graph.document/contact)
     // — assert via the rendered nodes count instead, which is deterministic.
     expect(screen.getAllByTestId(/memory-graph-node-/).length).toBe(2);
@@ -111,9 +105,7 @@ describe('<MemoryGraph />', () => {
 
   it('does NOT call openUrl when a non-summary node is clicked', async () => {
     const nodes = [makeChunkNode({ id: 'doc-1' })];
-    render(
-      <MemoryGraph nodes={nodes} edges={[]} mode="contacts" contentRootAbs="/tmp" />
-    );
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="contacts" contentRootAbs="/tmp" />);
     fireEvent.click(screen.getByTestId('memory-graph-node-doc-1'));
     await Promise.resolve();
     expect(openUrlMock).not.toHaveBeenCalled();
@@ -121,9 +113,7 @@ describe('<MemoryGraph />', () => {
 
   it('shows a tooltip footer when a node is hovered', () => {
     const nodes = [makeContactNode({ id: 'person:bob', label: 'Bob' })];
-    render(
-      <MemoryGraph nodes={nodes} edges={[]} mode="contacts" contentRootAbs="/tmp" />
-    );
+    render(<MemoryGraph nodes={nodes} edges={[]} mode="contacts" contentRootAbs="/tmp" />);
     fireEvent.mouseEnter(screen.getByTestId('memory-graph-node-person:bob'));
     expect(screen.getByTestId('memory-graph-tooltip')).toBeInTheDocument();
     expect(screen.getByTestId('memory-graph-tooltip').textContent).toContain('Bob');

@@ -1,11 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-  ActionableItem,
-  ActionableItemSource,
-  TimeGroup,
-} from '../../types/intelligence';
+import type { ActionableItem, ActionableItemSource, TimeGroup } from '../../types/intelligence';
 import IntelligenceMemoryTab from './IntelligenceMemoryTab';
 
 function makeItem(overrides: Partial<ActionableItem> = {}): ActionableItem {

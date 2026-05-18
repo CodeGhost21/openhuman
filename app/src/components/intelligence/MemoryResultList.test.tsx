@@ -44,9 +44,7 @@ describe('<MemoryResultList />', () => {
       makeChunk({ id: 'thisweek-1', timestamp_ms: todayMs - 3 * DAY_MS }),
       makeChunk({ id: 'older-1', timestamp_ms: todayMs - 30 * DAY_MS }),
     ];
-    render(
-      <MemoryResultList chunks={chunks} selectedChunkId={null} onSelectChunk={() => {}} />
-    );
+    render(<MemoryResultList chunks={chunks} selectedChunkId={null} onSelectChunk={() => {}} />);
 
     // Section headers are uppercased literal strings, not i18n keys.
     expect(screen.getByText('TODAY')).toBeInTheDocument();
@@ -96,11 +94,7 @@ describe('<MemoryResultList />', () => {
 
   it('uses the chunk id as the subject when no content preview is provided', () => {
     const chunks = [
-      makeChunk({
-        id: 'no-preview-id',
-        content_preview: '',
-        timestamp_ms: startOfTodayMs() + 1,
-      }),
+      makeChunk({ id: 'no-preview-id', content_preview: '', timestamp_ms: startOfTodayMs() + 1 }),
     ];
     render(<MemoryResultList chunks={chunks} selectedChunkId={null} onSelectChunk={() => {}} />);
     expect(screen.getByText('no-preview-id')).toBeInTheDocument();

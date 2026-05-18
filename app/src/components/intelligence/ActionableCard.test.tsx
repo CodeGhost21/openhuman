@@ -55,12 +55,7 @@ describe('<ActionableCard />', () => {
     const item = makeItem();
     const onDismiss = vi.fn();
     render(
-      <ActionableCard
-        item={item}
-        onComplete={() => {}}
-        onDismiss={onDismiss}
-        onSnooze={() => {}}
-      />
+      <ActionableCard item={item} onComplete={() => {}} onDismiss={onDismiss} onSnooze={() => {}} />
     );
     const dismissBtn = screen.getByTitle(/actionable\.dismiss|dismiss/i);
     fireEvent.click(dismissBtn);

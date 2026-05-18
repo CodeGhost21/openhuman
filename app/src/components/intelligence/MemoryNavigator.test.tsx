@@ -33,13 +33,7 @@ function makeSource(overrides: Partial<Source> = {}): Source {
 }
 
 function makeEntity(overrides: Partial<EntityRef> = {}): EntityRef {
-  return {
-    entity_id: 'person:Alice',
-    kind: 'person',
-    surface: 'Alice',
-    count: 5,
-    ...overrides,
-  };
+  return { entity_id: 'person:Alice', kind: 'person', surface: 'Alice', count: 5, ...overrides };
 }
 
 describe('<MemoryNavigator />', () => {
