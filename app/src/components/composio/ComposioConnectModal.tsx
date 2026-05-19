@@ -34,6 +34,11 @@ import {
   setUserScopes,
 } from '../../lib/composio/composioApi';
 import {
+  isMetaOAuthToolkit,
+  isOAuthRateLimitedError,
+  metaOAuthRateLimitMessage,
+} from '../../lib/composio/oauthHandoff';
+import {
   type ComposioConnection,
   type ComposioUserScopePref,
   deriveComposioState,
@@ -172,6 +177,7 @@ export default function ComposioConnectModal({
   const pollDeadlineRef = useRef<number>(0);
   const isPollingRef = useRef<boolean>(false);
   const inFlightRef = useRef<boolean>(false);
+  const [connectInFlight, setConnectInFlight] = useState(false);
 
   const initialState = deriveComposioState(connection);
   const initiallyConnected = initialState === 'connected';
@@ -327,8 +333,16 @@ export default function ComposioConnectModal({
   }, [requiredFields, fieldValues]);
 
   const handleConnect = useCallback(async () => {
+    if (connectInFlight) {
+      console.debug(
+        '[composio][authorize] ignored duplicate Connect click toolkit=%s',
+        toolkit.slug
+      );
+      return;
+    }
     if (!validateRequiredFields()) return;
 
+    setConnectInFlight(true);
     setPhase('authorizing');
     setError(null);
     setFieldErrors({});
@@ -392,9 +406,24 @@ export default function ComposioConnectModal({
       }
 
       setPhase('error');
-      setError(sanitizeAuthError(err));
+      if (isMetaOAuthToolkit(toolkit.slug) && isOAuthRateLimitedError(err)) {
+        setError(metaOAuthRateLimitMessage(toolkit.name));
+      } else {
+        setError(sanitizeAuthError(err));
+      }
+    } finally {
+      setConnectInFlight(false);
     }
-  }, [validateRequiredFields, requiredFields, fieldValues, startPolling, toolkit.slug]);
+  }, [
+    connectInFlight,
+    validateRequiredFields,
+    requiredFields,
+    fieldValues,
+    startPolling,
+    toolkit.slug,
+    toolkit.name,
+    t,
+  ]);
 
   // Fetch the stored scope pref whenever the modal lands in the
   // 'connected' phase. Re-fetching each time we transition (rather
@@ -577,8 +606,9 @@ export default function ComposioConnectModal({
               {error && phase === 'idle' && <p className="text-[11px] text-coral-600">{error}</p>}
               <button
                 type="button"
+                disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
                 {`${t('composio.connect.connect')} ${toolkit.name}`}
               </button>
             </>
@@ -607,8 +637,9 @@ export default function ComposioConnectModal({
               />
               <button
                 type="button"
+                disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
                 {t('composio.connect.retryConnection')}
               </button>
               <button
@@ -664,8 +695,9 @@ export default function ComposioConnectModal({
               </div>
               <button
                 type="button"
+                disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
                 Reconnect {toolkit.name}
               </button>
             </>
