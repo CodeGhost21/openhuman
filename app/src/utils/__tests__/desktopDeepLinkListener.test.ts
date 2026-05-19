@@ -29,6 +29,19 @@ vi.mock('../../lib/coreState/store', () => ({
   patchCoreStateSnapshot: vi.fn(),
 }));
 
+const waitForOAuthAuthReadiness = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ ready: true as const })
+);
+
+vi.mock('../oauthAppVersionGate', async importOriginal => {
+  const actual = await importOriginal<typeof import('../oauthAppVersionGate')>();
+  return {
+    ...actual,
+    waitForOAuthAuthReadiness,
+    oauthAuthReadinessUserMessage: (reason: string) => `blocked:${reason}`,
+  };
+});
+
 const windowControls = vi.hoisted(() => ({
   show: vi.fn().mockResolvedValue(undefined),
   unminimize: vi.fn().mockResolvedValue(undefined),
@@ -102,6 +115,19 @@ describe('desktopDeepLinkListener', () => {
     expect(state.requiresAppDataReset).toBe(true);
     expect(state.errorMessage).toMatch(/Clear app data to start fresh/);
     expect(state.isProcessing).toBe(false);
+  });
+
+  it('surfaces readiness failures instead of a generic sign-in error', async () => {
+    waitForOAuthAuthReadiness.mockResolvedValueOnce({ ready: false, reason: 'core_mode_unset' });
+
+    vi.mocked(getCurrent).mockResolvedValue(['openhuman://auth?token=abc&key=auth']);
+
+    await setupDesktopDeepLinkListener();
+
+    const state = getDeepLinkAuthState();
+    expect(state.errorMessage).toBe('blocked:core_mode_unset');
+    expect(state.isProcessing).toBe(false);
+    expect(storeSession).not.toHaveBeenCalled();
   });
 
   it('keeps requiresAppDataReset false for non-decryption auth failures', async () => {

@@ -2,7 +2,11 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getBackendUrl } from '../../../services/backendUrl';
-import { getDeepLinkAuthState } from '../../../store/deepLinkAuthState';
+import {
+  beginDeepLinkAuthProcessing,
+  getDeepLinkAuthState,
+} from '../../../store/deepLinkAuthState';
+import { prepareOAuthLoginLaunch } from '../../../utils/oauthAppVersionGate';
 import { openUrl } from '../../../utils/openUrl';
 import { isTauri } from '../../../utils/tauriCommands';
 import OAuthProviderButton from '../OAuthProviderButton';
@@ -11,9 +15,17 @@ vi.mock('../../../services/backendUrl', () => ({ getBackendUrl: vi.fn() }));
 
 vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
+vi.mock('../../../utils/oauthAppVersionGate', () => ({
+  prepareOAuthLoginLaunch: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../../../utils/tauriCommands', () => ({ isTauri: vi.fn() }));
 
-vi.mock('../../../store/deepLinkAuthState', () => ({ getDeepLinkAuthState: vi.fn() }));
+vi.mock('../../../store/deepLinkAuthState', () => ({
+  beginDeepLinkAuthProcessing: vi.fn(),
+  completeDeepLinkAuthProcessing: vi.fn(),
+  getDeepLinkAuthState: vi.fn(),
+}));
 
 const stubProvider = {
   id: 'google' as const,
@@ -59,6 +71,8 @@ describe('OAuthProviderButton', () => {
       await Promise.resolve();
     });
 
+    expect(beginDeepLinkAuthProcessing).toHaveBeenCalledTimes(1);
+    expect(prepareOAuthLoginLaunch).toHaveBeenCalledTimes(1);
     expect(getBackendUrl).toHaveBeenCalledTimes(1);
     expect(openUrl).toHaveBeenCalledWith(
       expect.stringMatching(/^https:\/\/backend\.test\/auth\/google\/login(\?.*)?$/)

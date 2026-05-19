@@ -1,0 +1,126 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { getCoreStateSnapshot } from '../../../lib/coreState/store';
+import { bootCheckTransport } from '../../../services/bootCheckService';
+import { testCoreRpcConnection } from '../../../services/coreRpcClient';
+import { getStoredCoreMode } from '../../../utils/configPersistence';
+import { isTauri } from '../../../utils/tauriCommands/common';
+import { oauthAuthReadinessUserMessage, waitForOAuthAuthReadiness } from '../oauthAuthReadiness';
+
+vi.mock('../../../lib/coreState/store', () => ({ getCoreStateSnapshot: vi.fn() }));
+
+vi.mock('../../../services/coreRpcClient', () => ({
+  getCoreRpcUrl: vi.fn().mockResolvedValue('http://127.0.0.1:7788/rpc'),
+  testCoreRpcConnection: vi.fn(),
+}));
+
+vi.mock('../../../services/bootCheckService', () => ({
+  bootCheckTransport: { invokeCmd: vi.fn().mockResolvedValue(undefined), callRpc: vi.fn() },
+}));
+
+vi.mock('../../../utils/configPersistence', () => ({ getStoredCoreMode: vi.fn() }));
+
+vi.mock('../../../utils/tauriCommands/common', () => ({ isTauri: vi.fn().mockReturnValue(true) }));
+
+describe('oauthAuthReadiness', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getStoredCoreMode).mockReturnValue('local');
+    vi.mocked(getCoreStateSnapshot).mockReturnValue({
+      isBootstrapping: false,
+      isReady: true,
+      snapshot: {
+        sessionToken: null,
+        auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
+        currentUser: null,
+        onboardingCompleted: false,
+        chatOnboardingCompleted: false,
+        analyticsEnabled: false,
+        meetAutoOrchestratorHandoff: false,
+        localState: { encryptionKey: null, onboardingTasks: null },
+        runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
+      },
+      teams: [],
+      teamMembersById: {},
+      teamInvitesById: {},
+    });
+    vi.mocked(testCoreRpcConnection).mockResolvedValue({ ok: true } as Response);
+  });
+
+  it('returns core_mode_unset when BootCheckGate has not committed a mode', async () => {
+    vi.mocked(getStoredCoreMode).mockReturnValue(null);
+
+    const result = await waitForOAuthAuthReadiness(500);
+
+    expect(result).toEqual({ ready: false, reason: 'core_mode_unset' });
+    expect(oauthAuthReadinessUserMessage('core_mode_unset')).toMatch(/setup screen/i);
+  });
+
+  it('returns ready when core mode, bootstrap, and ping are satisfied', async () => {
+    const result = await waitForOAuthAuthReadiness(2_000);
+
+    expect(result).toEqual({ ready: true });
+    expect(bootCheckTransport.invokeCmd).toHaveBeenCalledWith('start_core_process', {});
+    expect(testCoreRpcConnection).toHaveBeenCalled();
+  });
+
+  it('returns core_unreachable when ping never succeeds', async () => {
+    vi.mocked(testCoreRpcConnection).mockResolvedValue({ ok: false } as Response);
+
+    const result = await waitForOAuthAuthReadiness(600);
+
+    expect(result).toEqual({ ready: false, reason: 'core_unreachable' });
+  });
+
+  it('waits for bootstrap to finish before returning ready', async () => {
+    vi.mocked(getCoreStateSnapshot)
+      .mockReturnValueOnce({
+        isBootstrapping: true,
+        isReady: false,
+        snapshot: {
+          sessionToken: null,
+          auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
+          currentUser: null,
+          onboardingCompleted: false,
+          chatOnboardingCompleted: false,
+          analyticsEnabled: false,
+          meetAutoOrchestratorHandoff: false,
+          localState: { encryptionKey: null, onboardingTasks: null },
+          runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
+        },
+        teams: [],
+        teamMembersById: {},
+        teamInvitesById: {},
+      })
+      .mockReturnValue({
+        isBootstrapping: false,
+        isReady: true,
+        snapshot: {
+          sessionToken: null,
+          auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
+          currentUser: null,
+          onboardingCompleted: false,
+          chatOnboardingCompleted: false,
+          analyticsEnabled: false,
+          meetAutoOrchestratorHandoff: false,
+          localState: { encryptionKey: null, onboardingTasks: null },
+          runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
+        },
+        teams: [],
+        teamMembersById: {},
+        teamInvitesById: {},
+      });
+
+    const result = await waitForOAuthAuthReadiness(3_000);
+
+    expect(result).toEqual({ ready: true });
+  });
+
+  it('does not start the local core on web builds', async () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+
+    await waitForOAuthAuthReadiness(1_000);
+
+    expect(bootCheckTransport.invokeCmd).not.toHaveBeenCalled();
+  });
+});

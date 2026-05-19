@@ -2,9 +2,14 @@ import { useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { getBackendUrl } from '../../services/backendUrl';
-import { getDeepLinkAuthState } from '../../store/deepLinkAuthState';
+import {
+  beginDeepLinkAuthProcessing,
+  completeDeepLinkAuthProcessing,
+  getDeepLinkAuthState,
+} from '../../store/deepLinkAuthState';
 import type { OAuthProviderConfig } from '../../types/oauth';
 import { IS_DEV } from '../../utils/config';
+import { prepareOAuthLoginLaunch } from '../../utils/oauthAppVersionGate';
 import { openUrl } from '../../utils/openUrl';
 import { isTauri } from '../../utils/tauriCommands';
 
@@ -113,8 +118,13 @@ const OAuthProviderButton = ({
 
     setStartupError(null);
     setIsLoading(true);
+    beginDeepLinkAuthProcessing();
 
     try {
+      if (isTauri()) {
+        await prepareOAuthLoginLaunch();
+      }
+
       const backendUrl = await getBackendUrl();
       const loginUrl = `${backendUrl}/auth/${provider.id}/login${IS_DEV ? '?responseType=json' : ''}`;
 
@@ -134,6 +144,7 @@ const OAuthProviderButton = ({
         window.location.href = loginUrl;
       }
     } catch (error) {
+      completeDeepLinkAuthProcessing();
       const message = getOAuthStartupFailureMessage(provider);
       console.error(`[oauth-button][${provider.id}] OAuth startup failed`, {
         provider: provider.id,
