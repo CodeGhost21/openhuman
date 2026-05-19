@@ -108,38 +108,31 @@ where
         };
     }
 
-    let mut system_messages: Vec<T> = Vec::new();
-    let mut other_messages: Vec<T> = Vec::new();
-    for msg in messages.drain(..) {
-        if is_system(&msg) {
-            system_messages.push(msg);
-        } else {
-            other_messages.push(msg);
-        }
-    }
+    // Drop oldest non-system messages until the budget fits, preserving the
+    // original relative order of every retained message (system + non-system).
+    // Rebuilding as `system ++ other` would reorder history when a system
+    // message appears after non-system messages, which changes prompt
+    // semantics (see PR #2100 CodeRabbit review).
+    let mut removable_positions: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, msg)| (!is_system(msg)).then_some(idx))
+        .collect();
 
     let mut removed = 0usize;
-    while !other_messages.is_empty() {
-        let total: usize = system_messages
-            .iter()
-            .map(&estimate)
-            .chain(other_messages.iter().map(&estimate))
-            .sum();
+    while !removable_positions.is_empty() {
+        let total: usize = messages.iter().map(&estimate).sum();
         if total <= max_tokens {
             break;
         }
-        other_messages.remove(0);
+        let absolute_idx = removable_positions.remove(0);
+        // Subsequent positions shift left by one for every prior removal.
+        let remove_at = absolute_idx - removed;
+        messages.remove(remove_at);
         removed += 1;
     }
 
-    let final_tokens: usize = system_messages
-        .iter()
-        .map(&estimate)
-        .chain(other_messages.iter().map(&estimate))
-        .sum();
-
-    *messages = system_messages;
-    messages.extend(other_messages);
+    let final_tokens: usize = messages.iter().map(&estimate).sum();
 
     TokenBudgetOutcome {
         original_tokens,
@@ -207,6 +200,35 @@ mod tests {
             },
         ]);
         assert!(estimate_conversation_message_tokens(&msg) > 1_000);
+    }
+
+    #[test]
+    fn trim_preserves_relative_order_when_system_appears_late() {
+        // System message in the middle of history must not be moved to the
+        // front during trimming. Regression guard for PR #2100 review.
+        let mut messages = vec![
+            user_msg(&"a".repeat(40_000)), // oldest non-system, expected to drop
+            user_msg("first-user"),
+            ChatMessage::system("late-system"),
+            user_msg("last-user"),
+        ];
+        let outcome = trim_chat_messages_to_budget(&mut messages, 1_000);
+        assert!(outcome.trimmed);
+        // System position relative to surrounding messages is preserved.
+        let roles: Vec<&str> = messages.iter().map(|m| m.role.as_str()).collect();
+        let sys_idx = roles
+            .iter()
+            .position(|r| *r == "system")
+            .expect("system message must be retained");
+        // At least one user message should still precede the late system message.
+        assert!(
+            sys_idx > 0,
+            "late system message must remain after earlier surviving non-system messages"
+        );
+        assert!(
+            messages.iter().any(|m| m.content == "last-user"),
+            "newest user message must survive"
+        );
     }
 
     #[test]
