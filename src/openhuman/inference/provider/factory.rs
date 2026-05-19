@@ -413,6 +413,12 @@ fn make_cloud_provider_by_slug(
 /// "no auth", which surfaces an authentication error at first call rather than
 /// at factory build time.
 pub fn lookup_key_for_slug(slug: &str, config: &Config) -> anyhow::Result<String> {
+    if slug == "openai" {
+        return crate::openhuman::inference::openai_oauth::lookup_openai_bearer_token(config)
+            .map_err(|e| anyhow::anyhow!("[chat-factory] openai auth lookup failed: {e}"))
+            .map(|opt| opt.unwrap_or_default());
+    }
+
     let auth = AuthService::from_config(config);
     // Try new-style key first.
     let new_key = auth_key_for_slug(slug);
