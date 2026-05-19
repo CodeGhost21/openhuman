@@ -26,6 +26,7 @@ mod process_recovery;
 mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
+mod wechat_scanner;
 mod webview_accounts;
 mod webview_apis;
 mod whatsapp_scanner;
@@ -2207,6 +2208,7 @@ pub fn run() {
     let builder = builder.manage(slack_scanner::ScannerRegistry::new());
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
     let builder = builder.manage(telegram_scanner::ScannerRegistry::new());
+    let builder = builder.manage(wechat_scanner::ScannerRegistry::new());
     let builder = builder.manage(screen_capture::ScreenShareState::new());
     let builder = builder.manage(meet_call::MeetCallState::new());
     let builder = builder.manage(meet_audio::MeetAudioState::new());
