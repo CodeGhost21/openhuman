@@ -258,6 +258,10 @@ fn hash_scan(chat_rows: &[ChatRow], messages: &[MessageRow], unread: u32) -> u64
                 mix(&mut h, *b);
             }
         }
+        mix(&mut h, 0x7c);
+        for b in r.unread.to_le_bytes() {
+            mix(&mut h, b);
+        }
     }
     for m in messages {
         for b in m.chat_id.as_bytes() {
@@ -313,6 +317,35 @@ mod tests {
         assert_ne!(
             hash_scan(&[row.clone()], &[first], 0),
             hash_scan(&[row], &[second], 0)
+        );
+    }
+
+    #[test]
+    fn hash_changes_when_unread_moves_between_chats() {
+        let a1 = ChatRow {
+            name: "A".into(),
+            preview: None,
+            unread: 2,
+        };
+        let b1 = ChatRow {
+            name: "B".into(),
+            preview: None,
+            unread: 0,
+        };
+        let a2 = ChatRow {
+            name: "A".into(),
+            preview: None,
+            unread: 0,
+        };
+        let b2 = ChatRow {
+            name: "B".into(),
+            preview: None,
+            unread: 2,
+        };
+        assert_ne!(
+            hash_scan(&[a1, b1], &[], 2),
+            hash_scan(&[a2, b2], &[], 2),
+            "per-chat unread distribution must affect the hash"
         );
     }
 }

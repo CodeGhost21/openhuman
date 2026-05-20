@@ -120,19 +120,17 @@ fn emit_and_persist<R: Runtime>(app: &AppHandle<R>, account_id: &str, payload: &
                 Ok(params) => {
                     if let Err(e) = post_memory_doc(&acct, Ok(params)).await {
                         log::warn!(
-                            "[wechat][{}] peer memory upsert failed chat_id={} chat_name={}: {}",
+                            "[wechat][{}] peer memory upsert failed chat_id={}: {}",
                             acct,
                             chat_id,
-                            chat_name,
                             e
                         );
                     }
                 }
                 Err(e) => log::warn!(
-                    "[wechat][{}] peer transcript build failed chat_id={} chat_name={}: {}",
+                    "[wechat][{}] peer transcript build failed chat_id={}: {}",
                     acct,
                     chat_id,
-                    chat_name,
                     e
                 ),
             }
