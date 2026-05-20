@@ -435,6 +435,25 @@ fn is_provider_user_state_message(lower: &str) -> bool {
         return true;
     }
 
+    // OPENHUMAN-TAURI-XX: custom_openai upstream rejected the request with
+    // its own 400. Wire shape produced by
+    // `inference/provider/compatible.rs::is_custom_openai_upstream_bad_request_http_400`:
+    //
+    //   custom_openai API error (400 Bad Request): {"error":{
+    //     "message":"Bad request to upstream provider",
+    //     "type":"upstream_error","status":400}}
+    //
+    // Anchored to the `custom_openai api error (400` prefix so this can't
+    // silence unrelated errors that happen to mention both
+    // "bad request to upstream provider" and "upstream_error" elsewhere
+    // (e.g. a future provider whose envelope reuses one of those strings).
+    if lower.contains("custom_openai api error (400")
+        && lower.contains("bad request to upstream provider")
+        && lower.contains("upstream_error")
+    {
+        return true;
+    }
+
     // OPENHUMAN-TAURI-97: composio authorize with a blank required field —
     // SharePoint Subdomain, WhatsApp WABA ID, Tenant Name, etc.
     // Backend returns 500 with `"Missing required fields: …"` body.
@@ -461,6 +480,16 @@ fn is_provider_user_state_message(lower: &str) -> bool {
     // `HTTP 403: Request had insufficient authentication scopes.`
     // (or any sibling OAuth scope rejection from composio's toolkits).
     if lower.contains("insufficient authentication scopes") {
+        return true;
+    }
+
+    // OPENHUMAN-TAURI-S7: provider policy rejection on Kimi's coding
+    // endpoint when requests are not sent from an approved coding-agent
+    // client. Canonical body contains `access_terminated_error` and:
+    // "currently only available for Coding Agents ...".
+    if lower.contains("access_terminated_error")
+        || lower.contains("currently only available for coding agents")
+    {
         return true;
     }
 
@@ -1565,6 +1594,56 @@ mod tests {
     }
 
     #[test]
+    fn classifies_custom_openai_upstream_bad_request_as_provider_user_state() {
+        assert_eq!(
+            expected_error_kind(
+                "custom_openai API error (400 Bad Request): \
+                 {\"error\":{\"message\":\"Bad request to upstream provider\",\
+                 \"type\":\"upstream_error\",\"status\":400}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        // Wrapped by higher-level callers (`agent.run_single`,
+        // `rpc.invoke_method`) must still classify.
+        assert_eq!(
+            expected_error_kind(
+                "agent.run_single failed: custom_openai API error (400 Bad Request): \
+                 {\"error\":{\"message\":\"Bad request to upstream provider\",\
+                 \"type\":\"upstream_error\",\"status\":400}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    /// Regression for CodeRabbit feedback on PR #2107: the matcher must
+    /// not demote unrelated errors that happen to contain both
+    /// "bad request to upstream provider" and "upstream_error" without
+    /// the `custom_openai API error (400` anchor.
+    #[test]
+    fn does_not_silence_unrelated_error_with_only_inner_substrings() {
+        // No `custom_openai API error (400` prefix → must NOT classify
+        // as ProviderUserState, otherwise we'd silence actionable bugs.
+        assert_eq!(
+            expected_error_kind(
+                "internal panic in router: bad request to upstream provider \
+                 (state=upstream_error)"
+            ),
+            None,
+        );
+
+        // A future hypothetical provider envelope reusing one substring
+        // also must not classify.
+        assert_eq!(
+            expected_error_kind(
+                "anthropic_api error: upstream_error encountered while \
+                 forwarding bad request to upstream provider"
+            ),
+            None,
+        );
+    }
+
+    #[test]
     fn classifies_missing_required_fields_as_provider_user_state() {
         // OPENHUMAN-TAURI-97: composio authorize with a blank required
         // field. Backend wraps the composio 400 as 500 with the inner
@@ -1611,6 +1690,23 @@ mod tests {
         // the gmail prefix).
         assert_eq!(
             expected_error_kind("HTTP 403: Request had insufficient authentication scopes."),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+    }
+
+    #[test]
+    fn classifies_access_terminated_provider_policy_as_provider_user_state() {
+        assert_eq!(
+            expected_error_kind(
+                "custom_openai API error (403 Forbidden): {\"error\":{\"message\":\"Kimi For Coding is currently only available for Coding Agents such as Kimi CLI, Claude Code, Roo Code, Kilo Code, etc.\",\"type\":\"access_terminated_error\"}}"
+            ),
+            Some(ExpectedErrorKind::ProviderUserState)
+        );
+
+        assert_eq!(
+            expected_error_kind(
+                "agent turn failed: custom_openai API error (403): currently only available for coding agents"
+            ),
             Some(ExpectedErrorKind::ProviderUserState)
         );
     }
@@ -1840,6 +1936,54 @@ mod tests {
                 expected_error_kind(raw),
                 Some(ExpectedErrorKind::SessionExpired),
                 "should classify as session-expired: {raw}"
+            );
+        }
+    }
+
+    /// OPENHUMAN-TAURI-SG (33 events, escalating, release `0.53.43+2b64ea8…`):
+    /// pre-#1763 leak of the `resolve_bearer` sentinel through
+    /// `agent.run_single`. PR #1763 (1fb0bef5) wired the `SessionExpired`
+    /// arm and the existing `classifies_session_expired_messages` test
+    /// covers the same byte string — this test pins the *Sentry-event
+    /// verbatim* shape (taken from the OPENHUMAN-TAURI-SG event payload)
+    /// so a future tweak to `is_session_expired_message` cannot regress
+    /// this exact wire form without a red test.
+    #[test]
+    fn session_expired_sg_wire_shape_matches() {
+        let msg = "SESSION_EXPIRED: backend session not active — sign in to resume LLM work";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::SessionExpired),
+            "OPENHUMAN-TAURI-SG wire shape must classify as SessionExpired — \
+             a regression here re-leaks 33+ events/cycle to Sentry"
+        );
+    }
+
+    /// The two sibling `SESSION_EXPIRED:` bail sites in
+    /// `providers::factory::verify_session_active` emit different message
+    /// suffixes but the same sentinel prefix. They route through the same
+    /// classifier as the run_single bail at
+    /// `providers::openhuman_backend::resolve_bearer`, and any matcher
+    /// tweak that breaks the family (e.g. moving from `contains` to a
+    /// stricter prefix/suffix match) would re-leak ALL of them. Pin every
+    /// variant the codebase actually emits so a future regression on the
+    /// matcher is caught for the whole family, not just the SG instance.
+    #[test]
+    fn session_expired_sibling_family_factory_strings_match() {
+        // src/openhuman/inference/provider/factory.rs:247
+        // (verify_session_active — scheduler_gate signed-out path)
+        let custom_providers_variant =
+            "SESSION_EXPIRED: backend session not active — sign in to use custom providers";
+        // src/openhuman/inference/provider/factory.rs:266
+        // (verify_session_active — empty auth-profile JWT path)
+        let no_backend_session_variant =
+            "SESSION_EXPIRED: no backend session — sign in to use OpenHuman";
+
+        for raw in [custom_providers_variant, no_backend_session_variant] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SessionExpired),
+                "factory.rs sibling sentinel must classify as SessionExpired: {raw}"
             );
         }
     }
