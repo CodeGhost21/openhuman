@@ -255,22 +255,34 @@ pub fn record_execution(
         let now = Utc::now().to_rfc3339();
         // Cap the error blurb so an upstream crash dump can't fill
         // the audit log. The agent already sees the full error in
-        // its own tool-result envelope.
+        // its own tool-result envelope. Keep the ellipsis-marked
+        // truncation within the 512-character cap (CodeRabbit
+        // review on #2367): when the input would overflow, take
+        // 511 chars and append the marker so the stored value is
+        // exactly 512 chars including the ellipsis.
         let trimmed_error = error.map(|e| {
-            let chars: String = e.chars().take(512).collect();
             if e.chars().count() > 512 {
-                format!("{chars}…")
+                let head: String = e.chars().take(511).collect();
+                format!("{head}…")
             } else {
-                chars
+                e.to_string()
             }
         });
+        // `executed_at IS NULL` makes the terminal audit row
+        // immutable — the first `record_execution` call wins, and a
+        // late retry/cleanup path can't silently rewrite the original
+        // outcome (CodeRabbit review on #2367). `decided_at IS NOT
+        // NULL` keeps the monotonic invariant (no "executed before
+        // approved" rows).
         let updated = conn
             .execute(
                 "UPDATE pending_approvals
                  SET executed_at = ?1,
                      execution_outcome = ?2,
                      execution_error = ?3
-                 WHERE request_id = ?4 AND decided_at IS NOT NULL",
+                 WHERE request_id = ?4
+                   AND decided_at IS NOT NULL
+                   AND executed_at IS NULL",
                 params![now, outcome.as_str(), trimmed_error, request_id],
             )
             .context("[approval::store] record_execution update")?;
@@ -498,10 +510,61 @@ mod tests {
 
         let (_, _, error) = read_execution_row(&config, "req-long");
         let stored = error.expect("error stored");
-        // 512-char cap + ellipsis marker; anything materially larger
-        // would let upstream crash dumps fill the audit log.
-        assert!(stored.len() < 600, "got length {}", stored.len());
+        // 512-char cap is inclusive of the ellipsis marker
+        // (CodeRabbit review on #2367) — anything longer would let
+        // upstream crash dumps slowly fill the audit log.
+        assert_eq!(
+            stored.chars().count(),
+            512,
+            "truncated value must be exactly 512 chars (incl. ellipsis): {} chars",
+            stored.chars().count()
+        );
         assert!(stored.ends_with('…'));
+    }
+
+    #[test]
+    fn record_execution_is_idempotent_after_first_terminal_report_wins() {
+        // CodeRabbit review on #2367: a late retry / cleanup path
+        // must NOT rewrite the original audit row. The first
+        // `record_execution` call wins; subsequent calls return
+        // `false` and leave the row unchanged.
+        let (config, _dir) = test_config();
+        insert_pending(&config, &sample("req-idem", "sess-A")).unwrap();
+        decide(&config, "req-idem", ApprovalDecision::ApproveOnce).unwrap();
+
+        // First report: succeeds, row gets stamped.
+        let first = record_execution(
+            &config,
+            "req-idem",
+            ExecutionOutcome::Success,
+            Some("ok-first"),
+        )
+        .unwrap();
+        assert!(first);
+        let (exec_at_1, outcome_1, error_1) = read_execution_row(&config, "req-idem");
+        assert!(exec_at_1.is_some());
+        assert_eq!(outcome_1.as_deref(), Some("success"));
+        assert_eq!(error_1.as_deref(), Some("ok-first"));
+
+        // Second report (e.g. a late retry that finally noticed the
+        // outcome) must be a no-op and must NOT change the stored
+        // outcome or timestamp.
+        let second = record_execution(
+            &config,
+            "req-idem",
+            ExecutionOutcome::Failure,
+            Some("late-failure-noise"),
+        )
+        .unwrap();
+        assert!(
+            !second,
+            "second record_execution must report no row updated"
+        );
+
+        let (exec_at_2, outcome_2, error_2) = read_execution_row(&config, "req-idem");
+        assert_eq!(exec_at_2, exec_at_1, "executed_at must not change");
+        assert_eq!(outcome_2.as_deref(), Some("success"));
+        assert_eq!(error_2.as_deref(), Some("ok-first"));
     }
 
     #[test]
