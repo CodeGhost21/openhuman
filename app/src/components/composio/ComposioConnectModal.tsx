@@ -306,7 +306,7 @@ export default function ComposioConnectModal({
     // Fire once immediately, then recurse via setTimeout once the previous
     // tick resolves. Avoids overlapping async ticks entirely.
     void tick();
-  }, [onChanged, stopPolling, toolkit.slug]);
+  }, [onChanged, stopPolling, t, toolkit.slug]);
 
   // If the modal opens while an OAuth handoff is already in flight
   // (status = PENDING/INITIATED/…), resume polling instead of asking
@@ -446,7 +446,7 @@ export default function ComposioConnectModal({
     return () => {
       cancelled = true;
     };
-  }, [phase, toolkit.slug]);
+  }, [phase, t, toolkit.slug]);
 
   const handleToggleScope = useCallback(
     async (key: keyof ComposioUserScopePref) => {
@@ -494,7 +494,7 @@ export default function ComposioConnectModal({
         setSavingScope(null);
       }
     },
-    [savingScope, scopes, toolkit.slug]
+    [savingScope, scopes, t, toolkit.slug]
   );
 
   const handleDisconnect = useCallback(async () => {
@@ -511,7 +511,7 @@ export default function ComposioConnectModal({
       setPhase('error');
       setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
     }
-  }, [activeConnection, onChanged]);
+  }, [activeConnection, onChanged, t]);
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
