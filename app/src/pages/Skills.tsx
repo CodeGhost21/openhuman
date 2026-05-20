@@ -336,8 +336,17 @@ export default function Skills() {
   // badges) and only flip on uncurated toolkits once the response
   // arrives. This avoids a flash of preview-badges on the curated
   // tiles during the initial paint.
-  const { agentReady: agentReadyToolkits, loading: agentReadyLoading } =
-    useAgentReadyComposioToolkits();
+  //
+  // When the RPC FAILS (non-loading, empty set, non-null error), we
+  // also default to "agent-ready" so curated toolkits don't all
+  // light up with a misleading Preview badge — the UI gracefully
+  // degrades to the pre-#2283 behaviour rather than misrepresenting
+  // the agent surface (CodeRabbit review on PR #2361).
+  const {
+    agentReady: agentReadyToolkits,
+    loading: agentReadyLoading,
+    error: agentReadyError,
+  } = useAgentReadyComposioToolkits();
 
   const [channelModalDef, setChannelModalDef] = useState<ChannelDefinition | null>(null);
   const [composioModalToolkit, setComposioModalToolkit] = useState<ComposioToolkitMeta | null>(
@@ -907,7 +916,11 @@ export default function Skills() {
                           meta={meta}
                           connection={connection}
                           hasComposioError={Boolean(composioError)}
-                          isAgentReady={agentReadyLoading || agentReadyToolkits.has(meta.slug)}
+                          isAgentReady={
+                            agentReadyLoading ||
+                            Boolean(agentReadyError) ||
+                            agentReadyToolkits.has(meta.slug)
+                          }
                           onOpen={() => setComposioModalToolkit(meta)}
                           onRetryGlobal={() => void refreshComposio()}
                         />
