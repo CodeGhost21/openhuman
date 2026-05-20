@@ -11,6 +11,7 @@ use crate::openhuman::inference::openai_oauth::lookup_openai_bearer_token;
 use crate::openhuman::inference::openai_oauth::store::{
     OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY,
 };
+use crate::openhuman::inference::provider::factory::lookup_key_for_slug;
 use chrono::{Duration, Utc};
 use motosan_ai_oauth::{OAuthConfig, StateStrategy, TokenBodyFormat};
 use tempfile::tempdir;
@@ -206,7 +207,6 @@ async fn exchange_authorization_code_parses_successful_token_response() {
     let token = exchange_authorization_code(
         &test_oauth_config(token_url),
         "code-123",
-        "state-123",
         "verifier-123",
         "http://127.0.0.1:1455/auth/callback",
     )
@@ -233,7 +233,6 @@ async fn exchange_authorization_code_reports_http_errors() {
     let err = exchange_authorization_code(
         &test_oauth_config(token_url),
         "code-123",
-        "state-123",
         "verifier-123",
         "http://127.0.0.1:1455/auth/callback",
     )
@@ -311,7 +310,7 @@ fn openai_oauth_status_reports_token_profile_as_disconnected() {
 }
 
 #[test]
-fn lookup_openai_bearer_token_prefers_api_key_over_oauth() {
+fn lookup_key_for_slug_prefers_api_key_over_oauth_for_openai() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let store = AuthProfilesStore::new(tmp.path(), false);
@@ -334,8 +333,10 @@ fn lookup_openai_bearer_token_prefers_api_key_over_oauth() {
         AuthProfile::new_token("provider:openai", "default", "sk-api-key".to_string());
     store.upsert_profile(api_profile, true).unwrap();
 
-    let token = lookup_openai_bearer_token(&config).unwrap();
-    assert_eq!(token.as_deref(), Some("sk-api-key"));
+    // The standard `lookup_key_for_slug` path resolves the API key first; the
+    // OAuth fallback only fires when no API key is present.
+    let token = lookup_key_for_slug("openai", &config).unwrap();
+    assert_eq!(token, "sk-api-key");
 }
 
 #[test]
@@ -362,7 +363,7 @@ fn lookup_openai_bearer_token_uses_oauth_when_api_key_missing() {
 }
 
 #[test]
-fn lookup_openai_bearer_token_uses_legacy_api_key_when_new_style_is_empty() {
+fn lookup_key_for_slug_uses_legacy_openai_api_key_when_new_style_is_empty() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
     let store = AuthProfilesStore::new(tmp.path(), false);
@@ -386,8 +387,10 @@ fn lookup_openai_bearer_token_uses_legacy_api_key_when_new_style_is_empty() {
         )
         .unwrap();
 
-    let token = lookup_openai_bearer_token(&config).unwrap();
-    assert_eq!(token.as_deref(), Some("sk-legacy-key"));
+    // Legacy bare-slug key resolves through the standard path's legacy
+    // fallback, ahead of the OAuth fallback.
+    let token = lookup_key_for_slug("openai", &config).unwrap();
+    assert_eq!(token, "sk-legacy-key");
 }
 
 #[test]

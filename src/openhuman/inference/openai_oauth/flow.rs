@@ -1,6 +1,7 @@
 //! OAuth start / complete / status for OpenAI Codex (ChatGPT subscription).
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{DateTime, Utc};
@@ -18,6 +19,7 @@ use super::store::{persist_openai_oauth_token, OPENAI_OAUTH_PROFILE_NAME, OPENAI
 const LOG_PREFIX: &str = "[inference][openai-oauth]";
 const PENDING_FILENAME: &str = "openai-oauth-pending.json";
 const PENDING_TTL_SECS: u64 = 600;
+const OAUTH_HTTP_TIMEOUT_SECS: u64 = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingOAuth {
@@ -166,14 +168,9 @@ pub async fn complete_openai_oauth(
     }
 
     let oauth_cfg = codex_oauth_config();
-    let token = exchange_authorization_code(
-        &oauth_cfg,
-        &code,
-        &pending.state,
-        &pending.verifier,
-        &pending.redirect_uri,
-    )
-    .await?;
+    let token =
+        exchange_authorization_code(&oauth_cfg, &code, &pending.verifier, &pending.redirect_uri)
+            .await?;
 
     clear_pending(config);
     let profile = persist_openai_oauth_token(config, &token)?;
@@ -259,14 +256,15 @@ pub(super) fn build_authorize_url(
 pub(super) async fn exchange_authorization_code(
     config: &motosan_ai_oauth::OAuthConfig,
     code: &str,
-    state: &str,
     verifier: &str,
     redirect_uri: &str,
 ) -> Result<motosan_ai_oauth::Token, String> {
+    // Per RFC 6749 §4.1.3 the token request only requires grant_type, code,
+    // redirect_uri, code_verifier (PKCE), and client_id. `state` belongs to the
+    // authorization request / callback validation, not this exchange.
     let mut params = vec![
         ("grant_type", "authorization_code"),
         ("code", code),
-        ("state", state),
         ("redirect_uri", redirect_uri),
         ("code_verifier", verifier),
         ("client_id", config.client_id),
@@ -275,17 +273,29 @@ pub(super) async fn exchange_authorization_code(
         params.push(("client_secret", secret));
     }
 
-    let resp = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(OAUTH_HTTP_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
         .post(config.token_url)
         .header("Accept", "application/json")
         .form(&params)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            log::warn!("{LOG_PREFIX} token exchange request failed: {e}");
+            e.to_string()
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
+        log::warn!(
+            "{LOG_PREFIX} token exchange http_status={status} body_len={}",
+            body.len()
+        );
         return Err(format!("HTTP {status}: {body}"));
     }
 
