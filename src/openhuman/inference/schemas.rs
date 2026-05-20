@@ -701,9 +701,7 @@ fn handle_inference_openai_oauth_status(_params: Map<String, Value>) -> Controll
 fn handle_inference_openai_oauth_disconnect(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(
-            crate::openhuman::inference::rpc::inference_openai_oauth_disconnect(&config).await?,
-        )
+        to_json(crate::openhuman::inference::rpc::inference_openai_oauth_disconnect(&config).await?)
     })
 }
 

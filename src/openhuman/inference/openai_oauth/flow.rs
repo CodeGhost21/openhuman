@@ -233,7 +233,7 @@ pub fn disconnect_openai_oauth(config: &Config) -> Result<serde_json::Value, Str
     Ok(serde_json::json!({ "disconnected": removed }))
 }
 
-fn build_authorize_url(
+pub(super) fn build_authorize_url(
     config: &motosan_ai_oauth::OAuthConfig,
     challenge: &str,
     state: &str,
@@ -256,7 +256,7 @@ fn build_authorize_url(
     url.to_string()
 }
 
-async fn exchange_authorization_code(
+pub(super) async fn exchange_authorization_code(
     config: &motosan_ai_oauth::OAuthConfig,
     code: &str,
     state: &str,
