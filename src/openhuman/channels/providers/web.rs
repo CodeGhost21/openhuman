@@ -239,15 +239,20 @@ fn with_provider_detail(summary: &str, err: &str) -> String {
 /// rounded up so the user is never told to retry sooner than the
 /// upstream actually allows.
 fn parse_retry_after_secs_from_str(err: &str) -> Option<u64> {
-    let lower = err.to_ascii_lowercase();
+    // Normalise quoted JSON-key wrappers ("retry_after": 30) by
+    // stripping double quotes before scanning for prefixes
+    // (CodeRabbit review on #2371). A serialised provider body like
+    // `{"retry_after": 30}` would otherwise miss every prefix and
+    // the user would lose the retry hint the provider supplied.
+    let normalized = err.to_ascii_lowercase().replace('"', "");
     for prefix in &[
         "retry-after:",
         "retry_after:",
         "retry-after ",
         "retry_after ",
     ] {
-        if let Some(pos) = lower.find(prefix) {
-            let after = &err[pos + prefix.len()..];
+        if let Some(pos) = normalized.find(prefix) {
+            let after = &normalized[pos + prefix.len()..];
             let num_str: String = after
                 .trim()
                 .chars()
@@ -273,8 +278,14 @@ fn retry_after_hint(secs: Option<u64>) -> String {
         Some(1) => " Try again in 1 second.".to_string(),
         Some(n) if n < 90 => format!(" Try again in {n} seconds."),
         Some(n) => {
-            let mins = n / 60;
-            format!(" Try again in about {mins} minutes.")
+            // Round UP — never tell the user to retry sooner than
+            // the upstream actually allows. 90–119s used to render
+            // as "about 1 minutes" both because of integer flooring
+            // and missing singular/plural handling (CodeRabbit
+            // review on #2371).
+            let mins = (n / 60) + u64::from(n % 60 != 0);
+            let unit = if mins == 1 { "minute" } else { "minutes" };
+            format!(" Try again in about {mins} {unit}.")
         }
         None => String::new(),
     }

@@ -308,6 +308,51 @@ fn classify_inference_error_rate_limited_handles_fractional_and_minute_windows()
 }
 
 #[test]
+fn classify_inference_error_rate_limited_minute_window_uses_singular_and_rounds_up() {
+    // CodeRabbit on #2371: the 90–119s band used to render
+    // "about 1 minutes" (floor + missing plural handling). Round
+    // up + singular/plural now produces "about 2 minutes" for 90s
+    // (since 90s ceils to 2 minutes) and "about 2 minutes" for
+    // 119s (ditto). 60s lands in the seconds band; 61s is the
+    // smallest minute-band input but still <90 so seconds; 90s is
+    // the first true minute-band input.
+    let (_, m_90) = classify_inference_error("429 Too Many Requests: Retry-After: 90");
+    assert!(
+        m_90.contains("about 2 minutes"),
+        "90s must round up to 2 minutes (not floor to 1): {m_90}"
+    );
+    let (_, m_119) = classify_inference_error("429 Too Many Requests: Retry-After: 119");
+    assert!(
+        m_119.contains("about 2 minutes"),
+        "119s must round up to 2 minutes: {m_119}"
+    );
+    // Exactly 60-multiple inputs above the 90s threshold render as
+    // exact minutes with no round-up bump.
+    let (_, m_120) = classify_inference_error("429 Too Many Requests: Retry-After: 120");
+    assert!(
+        m_120.contains("about 2 minutes"),
+        "exact 120s must stay as 2 minutes: {m_120}"
+    );
+}
+
+#[test]
+fn classify_inference_error_rate_limited_parses_quoted_json_retry_after() {
+    // CodeRabbit on #2371: a serialised provider body like
+    // {"retry_after": 30} would previously miss every prefix
+    // because the quote stopped `lower.find("retry_after:")` from
+    // matching. The parser now strips quotes so the JSON-key shape
+    // resolves the same as the unquoted header shape.
+    let (category, message) = classify_inference_error(
+        r#"openrouter API error (429 Too Many Requests): {"retry_after": 30, "code": "rate_limited"}"#,
+    );
+    assert_eq!(category, "rate_limited");
+    assert!(
+        message.contains("Try again in 30 seconds"),
+        "quoted JSON retry_after must be parsed: {message}"
+    );
+}
+
+#[test]
 fn generic_error_copy_is_sanitized_and_has_discord_report_action() {
     let message = generic_inference_error_user_message();
     assert!(message.contains("Something went wrong. Please try again."));
