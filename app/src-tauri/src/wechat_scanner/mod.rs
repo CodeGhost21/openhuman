@@ -116,7 +116,8 @@ fn emit_and_persist<R: Runtime>(app: &AppHandle<R>, account_id: &str, payload: &
     for (chat_id, (chat_name, rows)) in groups {
         let acct = account_id.to_string();
         tokio::spawn(async move {
-            if let Ok(params) = memory_doc_ingest_peer_transcript(&acct, &chat_id, &chat_name, &rows)
+            if let Ok(params) =
+                memory_doc_ingest_peer_transcript(&acct, &chat_id, &chat_name, &rows)
             {
                 let _ = post_memory_doc(&acct, Ok(params)).await;
             }
@@ -147,7 +148,11 @@ async fn post_memory_doc(
         .await
         .map_err(|e| format!("POST {url}: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("{}: {}", resp.status(), resp.text().await.unwrap_or_default()));
+        return Err(format!(
+            "{}: {}",
+            resp.status(),
+            resp.text().await.unwrap_or_default()
+        ));
     }
     let v: Value = resp.json().await.map_err(|e| format!("decode: {e}"))?;
     if v.get("error").is_some() {
@@ -187,9 +192,10 @@ impl ScannerRegistry {
         if g.contains_key(&account_id) {
             return;
         }
+        let scanner_account_id = account_id.clone();
         g.insert(
             account_id,
-            spawn_scanner(app, account_id.clone(), url_prefix),
+            spawn_scanner(app, scanner_account_id, url_prefix),
         );
     }
 

@@ -26,9 +26,9 @@ mod process_recovery;
 mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
-mod wechat_scanner;
 mod webview_accounts;
 mod webview_apis;
+mod wechat_scanner;
 mod whatsapp_scanner;
 mod window_state;
 

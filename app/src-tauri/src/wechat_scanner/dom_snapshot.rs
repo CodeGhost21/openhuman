@@ -59,7 +59,9 @@ pub async fn scan(cdp: &mut CdpConn, session: &str) -> Result<DomScan, String> {
         }
         messages.push(MessageRow {
             chat_id: chat_id_base.to_string(),
-            chat_name: active_chat_name.clone().unwrap_or_else(|| chat_id_base.to_string()),
+            chat_name: active_chat_name
+                .clone()
+                .unwrap_or_else(|| chat_id_base.to_string()),
             sender: find_message_sender(&snap, idx),
             body,
             ts: None,
@@ -79,7 +81,9 @@ pub fn scan_to_core_payload(
     account_id: &str,
     scan: &DomScan,
 ) -> openhuman_core::openhuman::webview_accounts::WechatScanPayload {
-    use openhuman_core::openhuman::webview_accounts::{WechatChatRow, WechatMessageRow, WechatScanPayload};
+    use openhuman_core::openhuman::webview_accounts::{
+        WechatChatRow, WechatMessageRow, WechatScanPayload,
+    };
     WechatScanPayload {
         account_id: account_id.to_string(),
         chat_rows: scan
@@ -214,7 +218,9 @@ fn find_message_sender(snap: &Snapshot, bubble: usize) -> Option<String> {
 }
 
 fn find_text_by_class_hints(snap: &Snapshot, root: usize, hints: &[&str]) -> Option<String> {
-    let node = snap.find_descendant(root, |s, i| s.is_element(i) && class_matches_any(s, i, hints))?;
+    let node = snap.find_descendant(root, |s, i| {
+        s.is_element(i) && class_matches_any(s, i, hints)
+    })?;
     let t = snap.text_content(node);
     if t.is_empty() {
         None
