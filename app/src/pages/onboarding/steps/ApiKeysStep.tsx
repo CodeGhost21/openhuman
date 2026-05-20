@@ -254,7 +254,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
           type="button"
           onClick={onSkip}
           disabled={saving}
-          className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 underline disabled:opacity-50">
+          className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 underline disabled:opacity-50">
           {t('onboarding.apiKeys.skipForNow')}
         </button>
       </div>
