@@ -115,7 +115,17 @@ pub async fn authorize_with_meta_guard(
     toolkit: &str,
     extra_params: Option<serde_json::Value>,
 ) -> anyhow::Result<ComposioAuthorizeResponse> {
-    let cleared = clear_non_active_connections(client, toolkit).await?;
+    let cleared = match clear_non_active_connections(client, toolkit).await {
+        Ok(cleared) => cleared,
+        Err(e) => {
+            tracing::warn!(
+                toolkit = %toolkit,
+                error = %e,
+                "[composio][oauth] pre-handoff cleanup failed; continuing authorize"
+            );
+            0
+        }
+    };
     tracing::debug!(
         toolkit = %toolkit,
         cleared,
