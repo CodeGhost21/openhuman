@@ -1668,6 +1668,51 @@ async fn fetch_connected_integrations_uncached(
         .filter(|toolkit| !toolkit.is_empty())
         .collect();
 
+    // Most-informative *non-active* status per toolkit slug. Lets the
+    // integrations_agent spawn-gate (#2365) emit a precise message
+    // when a connection row exists but isn't usable yet (`INITIATED`
+    // — OAuth still in progress) or any longer (`EXPIRED` / `FAILED`)
+    // — instead of the legacy generic "available but not authorized".
+    //
+    // Status priority (UI-actionability):
+    //   1. EXPIRED  — reconnect path
+    //   2. FAILED / ERROR — reconnect path
+    //   3. INITIATED / INITIALIZING / PENDING — finish OAuth in browser
+    //   4. anything else — passes through verbatim
+    let non_active_status_by_slug: std::collections::HashMap<String, String> = {
+        fn priority(status: &str) -> u8 {
+            let s = status.trim().to_ascii_uppercase();
+            match s.as_str() {
+                "EXPIRED" => 4,
+                "FAILED" | "ERROR" => 3,
+                "INITIATED" | "INITIALIZING" | "PENDING" => 2,
+                _ => 1,
+            }
+        }
+        let mut map: std::collections::HashMap<String, (u8, String)> =
+            std::collections::HashMap::new();
+        for conn in connections.iter().filter(|c| !c.is_active()) {
+            let slug = conn.normalized_toolkit();
+            if slug.is_empty() {
+                continue;
+            }
+            // Don't override an ACTIVE-slug — those carry no non-active
+            // status from this map's perspective.
+            if connected_slugs.contains(&slug) {
+                continue;
+            }
+            let p = priority(&conn.status);
+            map.entry(slug)
+                .and_modify(|cur| {
+                    if p > cur.0 {
+                        *cur = (p, conn.status.clone());
+                    }
+                })
+                .or_insert_with(|| (p, conn.status.clone()));
+        }
+        map.into_iter().map(|(k, (_, v))| (k, v)).collect()
+    };
+
     // Deduplicate the allowlist so a backend that returns duplicates
     // doesn't produce dual entries downstream.
     let mut unique_toolkits: Vec<String> = allowlisted_toolkits.clone();
@@ -1764,6 +1809,11 @@ async fn fetch_connected_integrations_uncached(
             tools,
             gated_tools,
             connected,
+            non_active_status: if connected {
+                None
+            } else {
+                non_active_status_by_slug.get(slug).cloned()
+            },
         });
     }
 
