@@ -52,11 +52,7 @@ describe('Skills page — Composio catalog fallback', () => {
     composioError = null;
     composioToolkits = [];
     composioConnectionByToolkit = new Map();
-    agentReadyState = {
-      agentReady: new Set<string>(),
-      loading: true,
-      error: null,
-    };
+    agentReadyState = { agentReady: new Set<string>(), loading: true, error: null };
   });
 
   it('shows known composio integrations in the integrations icon grid when the live toolkit list is empty', () => {
@@ -140,11 +136,7 @@ describe('Skills page — Composio catalog fallback', () => {
     // treating every toolkit as agent-ready in this state so the
     // page degrades to the pre-#2283 behaviour instead of
     // misrepresenting the agent surface.
-    agentReadyState = {
-      agentReady: new Set<string>(),
-      loading: false,
-      error: 'rpc unavailable',
-    };
+    agentReadyState = { agentReady: new Set<string>(), loading: false, error: 'rpc unavailable' };
 
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
