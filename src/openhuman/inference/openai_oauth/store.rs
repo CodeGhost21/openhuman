@@ -7,7 +7,6 @@ use motosan_ai_oauth::Token;
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::profiles::{AuthProfile, AuthProfilesStore, TokenSet};
 use crate::openhuman::credentials::{state_dir_from_config, AuthService};
-use crate::openhuman::inference::provider::factory::auth_key_for_slug;
 
 use super::config::codex_oauth_config;
 
@@ -54,9 +53,15 @@ fn auth_profiles_store(config: &Config) -> AuthProfilesStore {
 
 fn try_refresh_oauth_token(refresh: &str) -> Result<Token, String> {
     let cfg = codex_oauth_config();
-    let fut = motosan_ai_oauth::refresh(&cfg, refresh);
+    let refresh = refresh.to_string();
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        return handle.block_on(fut).map_err(|e| e.to_string());
+        // `block_in_place` lets the multi-thread runtime move other tasks off this
+        // worker before we synchronously drive the refresh future, avoiding a
+        // deadlock when this lookup is reached from inside an async caller.
+        return tokio::task::block_in_place(|| {
+            handle.block_on(motosan_ai_oauth::refresh(&cfg, &refresh))
+        })
+        .map_err(|e| e.to_string());
     }
     Err("tokio runtime required to refresh openai oauth token".to_string())
 }
@@ -78,21 +83,13 @@ fn extract_account_id_from_access_token(access_token: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Look up the OpenAI bearer token sourced from the OAuth (ChatGPT
+/// subscription) flow. Returns `Ok(None)` when no OAuth profile is present or
+/// when the access token is empty. API-key fallback for the `openai` slug is
+/// handled by the standard `lookup_key_for_slug` path — this function is
+/// OAuth-only so the standard path's env/audit/metrics logic still runs.
 pub fn lookup_openai_bearer_token(config: &Config) -> Result<Option<String>, String> {
     let auth = AuthService::from_config(config);
-    let slug = "openai";
-    let new_key = auth_key_for_slug(slug);
-
-    if let Ok(Some(k)) = auth.get_provider_bearer_token(&new_key, None) {
-        if !k.is_empty() {
-            return Ok(Some(k));
-        }
-    }
-    if let Ok(Some(k)) = auth.get_provider_bearer_token(slug, None) {
-        if !k.is_empty() {
-            return Ok(Some(k));
-        }
-    }
 
     let profile = auth
         .get_profile(OPENAI_PROVIDER_KEY, Some(OPENAI_OAUTH_PROFILE_NAME))
@@ -113,7 +110,12 @@ pub fn lookup_openai_bearer_token(config: &Config) -> Result<Option<String>, Str
                 Ok(fresh) => {
                     token_set = token_set_from_codex(&fresh);
                     profile.token_set = Some(token_set.clone());
-                    let _ = auth_profiles_store(config).upsert_profile(profile, true);
+                    if let Err(e) = auth_profiles_store(config).upsert_profile(profile, true) {
+                        log::warn!(
+                            "{LOG_PREFIX} failed to persist refreshed token: {e}; \
+                             fresh access token will be lost on restart"
+                        );
+                    }
                 }
                 Err(e) => {
                     log::warn!("{LOG_PREFIX} oauth refresh failed: {e}");
