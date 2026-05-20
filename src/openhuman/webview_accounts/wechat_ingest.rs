@@ -162,7 +162,7 @@ pub fn memory_doc_ingest_peer_transcript(
         sorted.len()
     );
     let key = if peer_key_looks_clean(chat_name) {
-        chat_name.to_string()
+        format!("{chat_id}:{chat_name}")
     } else {
         chat_id.to_string()
     };
@@ -223,11 +223,11 @@ fn format_list_transcript(payload: &WechatScanPayload) -> String {
     lines.join("\n")
 }
 
-fn short_account(account_id: &str) -> &str {
-    if account_id.len() <= 8 {
-        account_id
+fn short_account(account_id: &str) -> String {
+    if account_id.chars().count() <= 8 {
+        account_id.to_string()
     } else {
-        &account_id[..8]
+        account_id.chars().take(8).collect()
     }
 }
 
@@ -331,5 +331,28 @@ mod tests {
     #[test]
     fn peer_transcript_rejects_empty_messages() {
         assert!(memory_doc_ingest_peer_transcript("acct", "c1", "Alice", &[]).is_err());
+    }
+
+    #[test]
+    fn peer_transcript_key_includes_chat_id_for_clean_names() {
+        let rows = vec![WechatMessageRow {
+            chat_id: "chat-1".into(),
+            chat_name: "Alice".into(),
+            sender: None,
+            body: "hello".into(),
+            ts: Some(1),
+        }];
+
+        let first = memory_doc_ingest_peer_transcript("acct", "chat-1", "Alice", &rows).unwrap();
+        let second = memory_doc_ingest_peer_transcript("acct", "chat-2", "Alice", &rows).unwrap();
+
+        assert_eq!(first["key"].as_str(), Some("chat-1:Alice"));
+        assert_eq!(second["key"].as_str(), Some("chat-2:Alice"));
+    }
+
+    #[test]
+    fn short_account_truncates_on_char_boundary() {
+        assert_eq!(short_account("acct-123"), "acct-123");
+        assert_eq!(short_account("ééééééééé"), "éééééééé");
     }
 }

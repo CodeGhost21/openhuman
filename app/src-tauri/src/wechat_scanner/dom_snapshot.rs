@@ -259,6 +259,32 @@ fn hash_scan(chat_rows: &[ChatRow], messages: &[MessageRow], unread: u32) -> u64
             }
         }
     }
+    for m in messages {
+        for b in m.chat_id.as_bytes() {
+            mix(&mut h, *b);
+        }
+        mix(&mut h, 0x7c);
+        for b in m.chat_name.as_bytes() {
+            mix(&mut h, *b);
+        }
+        mix(&mut h, 0x7c);
+        if let Some(sender) = &m.sender {
+            for b in sender.as_bytes() {
+                mix(&mut h, *b);
+            }
+        }
+        mix(&mut h, 0x7c);
+        for b in m.body.as_bytes() {
+            mix(&mut h, *b);
+        }
+        mix(&mut h, 0x7c);
+        if let Some(ts) = m.ts {
+            for b in ts.to_le_bytes() {
+                mix(&mut h, b);
+            }
+        }
+        mix(&mut h, 0x7c);
+    }
     h
 }
 
@@ -273,19 +299,20 @@ mod tests {
             preview: None,
             unread: 0,
         };
+        let first = MessageRow {
+            chat_id: "c".into(),
+            chat_name: "A".into(),
+            sender: Some("alice".into()),
+            body: "hello".into(),
+            ts: Some(1),
+        };
+        let second = MessageRow {
+            body: "world".into(),
+            ..first.clone()
+        };
         assert_ne!(
-            hash_scan(&[row.clone()], &[], 0),
-            hash_scan(
-                &[row],
-                &[MessageRow {
-                    chat_id: "c".into(),
-                    chat_name: "A".into(),
-                    sender: None,
-                    body: "hello".into(),
-                    ts: None,
-                }],
-                0
-            )
+            hash_scan(&[row.clone()], &[first], 0),
+            hash_scan(&[row], &[second], 0)
         );
     }
 }

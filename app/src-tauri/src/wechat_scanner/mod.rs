@@ -116,10 +116,25 @@ fn emit_and_persist<R: Runtime>(app: &AppHandle<R>, account_id: &str, payload: &
     for (chat_id, (chat_name, rows)) in groups {
         let acct = account_id.to_string();
         tokio::spawn(async move {
-            if let Ok(params) =
-                memory_doc_ingest_peer_transcript(&acct, &chat_id, &chat_name, &rows)
-            {
-                let _ = post_memory_doc(&acct, Ok(params)).await;
+            match memory_doc_ingest_peer_transcript(&acct, &chat_id, &chat_name, &rows) {
+                Ok(params) => {
+                    if let Err(e) = post_memory_doc(&acct, Ok(params)).await {
+                        log::warn!(
+                            "[wechat][{}] peer memory upsert failed chat_id={} chat_name={}: {}",
+                            acct,
+                            chat_id,
+                            chat_name,
+                            e
+                        );
+                    }
+                }
+                Err(e) => log::warn!(
+                    "[wechat][{}] peer transcript build failed chat_id={} chat_name={}: {}",
+                    acct,
+                    chat_id,
+                    chat_name,
+                    e
+                ),
             }
         });
     }
