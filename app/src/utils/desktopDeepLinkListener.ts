@@ -98,19 +98,11 @@ const handleAuthDeepLink = async (parsed: URL) => {
   try {
     await focusMainWindow();
 
-    // `key=auth` is the direct-session-injection path (E2E bypass, dev
-    // tooling): the token IS the session JWT, so we skip the full
-    // readiness gate — that gate exists to make `consume_login_token`
-    // wait for the core HTTP server during first-launch OAuth, and the
-    // bypass path doesn't call the backend. `storeSession` itself is a
-    // local Tauri command and tolerates the brief startup window.
-    if (key !== 'auth') {
-      const readiness = await waitForOAuthAuthReadiness();
-      if (!readiness.ready) {
-        console.warn('[DeepLink][auth] OAuth readiness gate blocked login', readiness);
-        failDeepLinkAuthProcessing(oauthAuthReadinessUserMessage(readiness.reason));
-        return;
-      }
+    const readiness = await waitForOAuthAuthReadiness();
+    if (!readiness.ready) {
+      console.warn('[DeepLink][auth] OAuth readiness gate blocked login', readiness);
+      failDeepLinkAuthProcessing(oauthAuthReadinessUserMessage(readiness.reason));
+      return;
     }
 
     const sessionToken = key === 'auth' ? token : await consumeLoginToken(token);
@@ -336,7 +328,9 @@ export const setupDesktopDeepLinkListener = async () => {
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&provider=notion')
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&skillId=discord')
       const win = window as Window & { __simulateDeepLink?: (url: string) => Promise<void> };
-      win.__simulateDeepLink = (url: string) => handleDeepLinkUrls([url]);
+      win.__simulateDeepLink = async (url: string) => {
+        void handleDeepLinkUrls([url]);
+      };
     }
   } catch (err) {
     console.error('[DeepLink] Setup failed:', err);

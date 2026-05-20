@@ -3,9 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getCoreStateSnapshot } from '../../../lib/coreState/store';
 import { bootCheckTransport } from '../../../services/bootCheckService';
 import { testCoreRpcConnection } from '../../../services/coreRpcClient';
+import { isTauri } from '../../../services/webviewAccountService';
 import { getStoredCoreMode } from '../../../utils/configPersistence';
-import { isTauri } from '../../../utils/tauriCommands/common';
-import { oauthAuthReadinessUserMessage, waitForOAuthAuthReadiness } from '../oauthAuthReadiness';
+import {
+  oauthAuthReadinessUserMessage,
+  prepareOAuthLoginLaunch,
+  waitForOAuthAuthReadiness,
+} from '../oauthAuthReadiness';
 
 vi.mock('../../../lib/coreState/store', () => ({ getCoreStateSnapshot: vi.fn() }));
 
@@ -20,7 +24,9 @@ vi.mock('../../../services/bootCheckService', () => ({
 
 vi.mock('../../../utils/configPersistence', () => ({ getStoredCoreMode: vi.fn() }));
 
-vi.mock('../../../utils/tauriCommands/common', () => ({ isTauri: vi.fn().mockReturnValue(true) }));
+vi.mock('../../../services/webviewAccountService', () => ({
+  isTauri: vi.fn().mockReturnValue(true),
+}));
 
 describe('oauthAuthReadiness', () => {
   beforeEach(() => {
@@ -45,6 +51,7 @@ describe('oauthAuthReadiness', () => {
       teamInvitesById: {},
     });
     vi.mocked(testCoreRpcConnection).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(isTauri).mockReturnValue(true);
   });
 
   it('returns core_mode_unset when BootCheckGate has not committed a mode', async () => {
@@ -56,7 +63,7 @@ describe('oauthAuthReadiness', () => {
     expect(oauthAuthReadinessUserMessage('core_mode_unset')).toMatch(/setup screen/i);
   });
 
-  it('returns ready when core mode, bootstrap, and ping are satisfied', async () => {
+  it('returns ready when core mode and ping are satisfied', async () => {
     const result = await waitForOAuthAuthReadiness(2_000);
 
     expect(result).toEqual({ ready: true });
@@ -72,51 +79,7 @@ describe('oauthAuthReadiness', () => {
     expect(result).toEqual({ ready: false, reason: 'core_unreachable' });
   });
 
-  it('waits for bootstrap to finish before returning ready', async () => {
-    vi.mocked(getCoreStateSnapshot)
-      .mockReturnValueOnce({
-        isBootstrapping: true,
-        isReady: false,
-        snapshot: {
-          sessionToken: null,
-          auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
-          currentUser: null,
-          onboardingCompleted: false,
-          chatOnboardingCompleted: false,
-          analyticsEnabled: false,
-          meetAutoOrchestratorHandoff: false,
-          localState: { encryptionKey: null, onboardingTasks: null },
-          runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
-        },
-        teams: [],
-        teamMembersById: {},
-        teamInvitesById: {},
-      })
-      .mockReturnValue({
-        isBootstrapping: false,
-        isReady: true,
-        snapshot: {
-          sessionToken: null,
-          auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
-          currentUser: null,
-          onboardingCompleted: false,
-          chatOnboardingCompleted: false,
-          analyticsEnabled: false,
-          meetAutoOrchestratorHandoff: false,
-          localState: { encryptionKey: null, onboardingTasks: null },
-          runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
-        },
-        teams: [],
-        teamMembersById: {},
-        teamInvitesById: {},
-      });
-
-    const result = await waitForOAuthAuthReadiness(3_000);
-
-    expect(result).toEqual({ ready: true });
-  });
-
-  it('returns bootstrap_timeout when ping succeeds but bootstrap never finishes', async () => {
+  it('does not block first-login callbacks on CoreStateProvider bootstrap once ping succeeds', async () => {
     vi.mocked(getCoreStateSnapshot).mockReturnValue({
       isBootstrapping: true,
       isReady: false,
@@ -136,10 +99,9 @@ describe('oauthAuthReadiness', () => {
       teamInvitesById: {},
     });
 
-    const result = await waitForOAuthAuthReadiness(600);
+    const result = await waitForOAuthAuthReadiness(3_000);
 
-    expect(result).toEqual({ ready: false, reason: 'bootstrap_timeout' });
-    expect(oauthAuthReadinessUserMessage('bootstrap_timeout')).toMatch(/starting up/i);
+    expect(result).toEqual({ ready: true });
   });
 
   it('does not start the local core on web builds', async () => {
@@ -148,5 +110,29 @@ describe('oauthAuthReadiness', () => {
     await waitForOAuthAuthReadiness(1_000);
 
     expect(bootCheckTransport.invokeCmd).not.toHaveBeenCalled();
+  });
+
+  it('starts the local core only once during pre-launch readiness', async () => {
+    await prepareOAuthLoginLaunch();
+
+    expect(bootCheckTransport.invokeCmd).toHaveBeenCalledTimes(1);
+    expect(bootCheckTransport.invokeCmd).toHaveBeenCalledWith('start_core_process', {});
+  });
+
+  it('rejects with the readiness message when pre-launch core readiness fails', async () => {
+    vi.useFakeTimers();
+    vi.mocked(testCoreRpcConnection).mockResolvedValue({ ok: false } as Response);
+
+    try {
+      const launch = expect(prepareOAuthLoginLaunch()).rejects.toThrow(
+        oauthAuthReadinessUserMessage('core_unreachable')
+      );
+
+      await vi.advanceTimersByTimeAsync(8_000);
+
+      await launch;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
