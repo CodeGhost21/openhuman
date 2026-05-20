@@ -2,13 +2,10 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { checkBackendHealthy } from '../../../services/backendHealth';
-import { getBackendUrl } from '../../../services/backendUrl';
 import { getDeepLinkAuthState } from '../../../store/deepLinkAuthState';
 import { openUrl } from '../../../utils/openUrl';
 import { isTauri } from '../../../utils/tauriCommands';
 import OAuthProviderButton from '../OAuthProviderButton';
-
-vi.mock('../../../services/backendUrl', () => ({ getBackendUrl: vi.fn() }));
 
 vi.mock('../../../services/backendHealth', () => ({ checkBackendHealthy: vi.fn() }));
 
@@ -32,12 +29,16 @@ const stubProvider = {
 
 const twitterProvider = { ...stubProvider, id: 'twitter' as const, name: 'Twitter' };
 
-const healthyResult = { healthy: true as const, status: 200, latencyMs: 12 };
+const healthyResult = {
+  healthy: true as const,
+  status: 200,
+  latencyMs: 12,
+  backendUrl: 'https://backend.test',
+};
 
 describe('OAuthProviderButton', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.mocked(getBackendUrl).mockResolvedValue('https://backend.test');
     vi.mocked(checkBackendHealthy).mockResolvedValue(healthyResult);
     vi.mocked(openUrl).mockResolvedValue(undefined);
     vi.mocked(isTauri).mockReturnValue(true);
@@ -66,7 +67,6 @@ describe('OAuthProviderButton', () => {
       for (let i = 0; i < 6; i++) await Promise.resolve();
     });
 
-    expect(getBackendUrl).toHaveBeenCalledTimes(1);
     expect(openUrl).toHaveBeenCalledWith(
       expect.stringMatching(/^https:\/\/backend\.test\/auth\/google\/login(\?.*)?$/)
     );
@@ -171,7 +171,7 @@ describe('OAuthProviderButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Google' }));
 
     expect(override).toHaveBeenCalledTimes(1);
-    expect(getBackendUrl).not.toHaveBeenCalled();
+    expect(checkBackendHealthy).not.toHaveBeenCalled();
     expect(openUrl).not.toHaveBeenCalled();
     expect(screen.queryByText('Connecting...')).not.toBeInTheDocument();
   });
@@ -189,7 +189,7 @@ describe('OAuthProviderButton', () => {
       for (let i = 0; i < 6; i++) await Promise.resolve();
     });
 
-    expect(getBackendUrl).toHaveBeenCalledTimes(1);
+    expect(checkBackendHealthy).toHaveBeenCalledTimes(1);
     expect(openUrl).toHaveBeenCalledTimes(1);
   });
 
@@ -249,7 +249,6 @@ describe('OAuthProviderButton', () => {
       });
 
       expect(openUrl).not.toHaveBeenCalled();
-      expect(getBackendUrl).not.toHaveBeenCalled();
       expect(screen.getByRole('alert')).toHaveTextContent(
         /OpenHuman cloud sign-in is temporarily unavailable/i
       );

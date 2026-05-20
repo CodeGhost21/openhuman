@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { checkBackendHealthy } from '../../services/backendHealth';
-import { getBackendUrl } from '../../services/backendUrl';
 import { getDeepLinkAuthState } from '../../store/deepLinkAuthState';
 import type { OAuthProviderConfig } from '../../types/oauth';
 import { IS_DEV } from '../../utils/config';
@@ -78,6 +77,10 @@ const OAuthProviderButton = ({
     // browser landed on an error page (issue #1985).
     const probeBackendOnReturn = (label: string) => {
       if (!browserOpenedRef.current) return;
+      // Consume the flag so the second of a focus/visibilitychange pair (macOS
+      // can fire both back-to-back when returning from the system browser)
+      // becomes a no-op instead of triggering a redundant concurrent probe.
+      browserOpenedRef.current = false;
       void checkBackendHealthy()
         .then(result => {
           if (!result.healthy) {
@@ -181,7 +184,10 @@ const OAuthProviderButton = ({
     }
 
     try {
-      const backendUrl = await getBackendUrl();
+      // Reuse the URL the preflight already resolved — `getBackendUrl()` may
+      // hit a Tauri IPC round-trip and the result hasn't changed within a
+      // single click handler.
+      const backendUrl = preflight.backendUrl;
       const loginUrl = `${backendUrl}/auth/${provider.id}/login${IS_DEV ? '?responseType=json' : ''}`;
 
       if (IS_DEV) {

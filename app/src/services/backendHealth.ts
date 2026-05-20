@@ -9,7 +9,7 @@ export type BackendHealthFailureReason =
   | 'resolve-failure'; // could not resolve the backend URL at all
 
 export type BackendHealthResult =
-  | { healthy: true; status: number; latencyMs: number }
+  | { healthy: true; status: number; latencyMs: number; backendUrl: string }
   | { healthy: false; reason: BackendHealthFailureReason; status?: number; latencyMs: number };
 
 interface CheckOptions {
@@ -17,11 +17,21 @@ interface CheckOptions {
   fetchImpl?: typeof fetch;
 }
 
-// `GET /health` on the OpenHuman backend returns 200 `{"status":"ok"}`. We
-// treat any 2xx/3xx/4xx as "the backend is reachable at all" — the goal of
-// this probe is specifically to catch full edge/origin failures (Cloudflare
-// 5xx, DNS, offline) so we can surface them on the Welcome screen instead of
-// silently sending the user into a system browser that lands on an error page.
+/**
+ * Probes the backend `/health` endpoint.
+ *
+ * `GET /health` on the OpenHuman backend returns 200 `{"status":"ok"}`. We
+ * treat any 2xx/3xx/4xx as "the backend is reachable at all" — the goal of
+ * this probe is specifically to catch full edge/origin failures (Cloudflare
+ * 5xx, DNS, offline) so we can surface them on the Welcome screen instead of
+ * silently sending the user into a system browser that lands on an error page.
+ *
+ * **Never throws.** All network, timeout, and URL-resolution failures are
+ * caught internally and surfaced as `{ healthy: false, reason: … }` results,
+ * so callers do not need to wrap this in try/catch. The healthy variant also
+ * returns the resolved `backendUrl` so callers can reuse it without a second
+ * `getBackendUrl()` round-trip.
+ */
 export async function checkBackendHealthy(
   options: CheckOptions = {}
 ): Promise<BackendHealthResult> {
@@ -53,7 +63,7 @@ export async function checkBackendHealthy(
       return { healthy: false, reason: 'http-5xx', status: response.status, latencyMs };
     }
 
-    return { healthy: true, status: response.status, latencyMs };
+    return { healthy: true, status: response.status, latencyMs, backendUrl };
   } catch (err) {
     const latencyMs = Date.now() - start;
     if (err instanceof DOMException && err.name === 'AbortError') {
