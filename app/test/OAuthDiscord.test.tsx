@@ -21,17 +21,27 @@ import { renderWithProviders } from '../src/test/test-utils';
 // Module mocks
 // ---------------------------------------------------------------------------
 
-const { mockGetBackendUrl, mockOpenUrl, mockIsTauri } = vi.hoisted(() => ({
-  mockGetBackendUrl: vi.fn(),
-  mockOpenUrl: vi.fn(),
-  mockIsTauri: vi.fn(),
-}));
+const { mockGetBackendUrl, mockOpenUrl, mockIsTauri, mockPrepareOAuthLoginLaunch } = vi.hoisted(
+  () => ({
+    mockGetBackendUrl: vi.fn(),
+    mockOpenUrl: vi.fn(),
+    mockIsTauri: vi.fn(),
+    mockPrepareOAuthLoginLaunch: vi.fn(),
+  })
+);
 
 vi.mock('../src/services/backendUrl', () => ({ getBackendUrl: mockGetBackendUrl }));
 vi.mock('../src/utils/openUrl', () => ({ openUrl: mockOpenUrl }));
 vi.mock('../src/utils/tauriCommands', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, isTauri: mockIsTauri };
+});
+// The OAuth button now awaits a runtime-readiness preflight before launching
+// the system browser. Short-circuit it here so jsdom tests don't poll for a
+// core mode that is never set.
+vi.mock('../src/utils/oauthAppVersionGate', async importOriginal => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, prepareOAuthLoginLaunch: mockPrepareOAuthLoginLaunch };
 });
 
 // ---------------------------------------------------------------------------
@@ -42,6 +52,10 @@ const discordConfig = oauthProviderConfigs.find(p => p.id === 'discord')!;
 
 const renderDiscordButton = (props: Partial<ComponentProps<typeof OAuthProviderButton>> = {}) =>
   renderWithProviders(<OAuthProviderButton provider={discordConfig} {...props} />);
+
+beforeEach(() => {
+  mockPrepareOAuthLoginLaunch.mockReset().mockResolvedValue(undefined);
+});
 
 const clickButton = (btn: HTMLElement) =>
   act(async () => {

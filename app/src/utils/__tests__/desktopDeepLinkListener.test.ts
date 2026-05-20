@@ -120,7 +120,8 @@ describe('desktopDeepLinkListener', () => {
   it('surfaces readiness failures instead of a generic sign-in error', async () => {
     waitForOAuthAuthReadiness.mockResolvedValueOnce({ ready: false, reason: 'core_mode_unset' });
 
-    vi.mocked(getCurrent).mockResolvedValue(['openhuman://auth?token=abc&key=auth']);
+    // No `key=auth` → consume_login_token path → readiness gate is consulted.
+    vi.mocked(getCurrent).mockResolvedValue(['openhuman://auth?token=abc']);
 
     await setupDesktopDeepLinkListener();
 
@@ -128,6 +129,19 @@ describe('desktopDeepLinkListener', () => {
     expect(state.errorMessage).toBe('blocked:core_mode_unset');
     expect(state.isProcessing).toBe(false);
     expect(storeSession).not.toHaveBeenCalled();
+  });
+
+  it('skips the readiness gate for the key=auth direct-session-injection path', async () => {
+    waitForOAuthAuthReadiness.mockClear();
+
+    vi.mocked(getCurrent).mockResolvedValue(['openhuman://auth?token=abc&key=auth']);
+
+    await setupDesktopDeepLinkListener();
+    await waitForAuthSettled();
+
+    expect(waitForOAuthAuthReadiness).not.toHaveBeenCalled();
+    expect(storeSession).toHaveBeenCalledWith('abc', expect.any(Object));
+    expect(getDeepLinkAuthState().isProcessing).toBe(false);
   });
 
   it('keeps requiresAppDataReset false for non-decryption auth failures', async () => {

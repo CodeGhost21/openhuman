@@ -98,11 +98,19 @@ const handleAuthDeepLink = async (parsed: URL) => {
   try {
     await focusMainWindow();
 
-    const readiness = await waitForOAuthAuthReadiness();
-    if (!readiness.ready) {
-      console.warn('[DeepLink][auth] OAuth readiness gate blocked login', readiness);
-      failDeepLinkAuthProcessing(oauthAuthReadinessUserMessage(readiness.reason));
-      return;
+    // `key=auth` is the direct-session-injection path (E2E bypass, dev
+    // tooling): the token IS the session JWT, so we skip the full
+    // readiness gate — that gate exists to make `consume_login_token`
+    // wait for the core HTTP server during first-launch OAuth, and the
+    // bypass path doesn't call the backend. `storeSession` itself is a
+    // local Tauri command and tolerates the brief startup window.
+    if (key !== 'auth') {
+      const readiness = await waitForOAuthAuthReadiness();
+      if (!readiness.ready) {
+        console.warn('[DeepLink][auth] OAuth readiness gate blocked login', readiness);
+        failDeepLinkAuthProcessing(oauthAuthReadinessUserMessage(readiness.reason));
+        return;
+      }
     }
 
     const sessionToken = key === 'auth' ? token : await consumeLoginToken(token);
