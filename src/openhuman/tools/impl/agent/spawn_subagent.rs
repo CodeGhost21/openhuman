@@ -661,7 +661,15 @@ fn render_worker_thread_result(
 /// rewordings — the "Settings → Connections → {toolkit}" path is
 /// load-bearing for the UI navigation tests.
 pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) -> String {
-    match status.map(|s| s.trim().to_ascii_uppercase()).as_deref() {
+    // Keep the original (trimmed) status separately so the
+    // unknown-status branch can quote it verbatim — CodeRabbit
+    // review on #2373: matching on the uppercased value AND
+    // formatting with that uppercased value broke the
+    // "quote upstream status verbatim" contract for mixed/lowercase
+    // wire shapes.
+    let trimmed = status.map(str::trim).filter(|s| !s.is_empty());
+    let upper = trimmed.map(|s| s.to_ascii_uppercase());
+    match upper.as_deref() {
         Some("INITIATED") | Some("INITIALIZING") | Some("PENDING") => format!(
             "Integration '{toolkit}' has an OAuth flow in progress but it hasn't reached \
              ACTIVE yet. Do NOT retry this spawn. Tell the user the authorization is \
@@ -681,12 +689,18 @@ pub(crate) fn describe_unconnected_state(toolkit: &str, status: Option<&str>) ->
              to reconnect '{toolkit}' at Settings → Connections → '{toolkit}' before \
              retrying the original request."
         ),
-        Some(other) if !other.is_empty() => format!(
-            "Integration '{toolkit}' has a connection row but its status is `{other}`, \
-             which is not yet usable. Do NOT retry this spawn. Tell the user the \
-             connection is in an unusable state and ask them to reconnect '{toolkit}' \
-             at Settings → Connections → '{toolkit}'."
-        ),
+        Some(_) => {
+            // Quote the *original* upstream status, not its uppercased
+            // form — preserves "DeauthRequired" / "needs_relink"-style
+            // mixed-case wire values for triage.
+            let raw = trimmed.unwrap_or("");
+            format!(
+                "Integration '{toolkit}' has a connection row but its status is `{raw}`, \
+                 which is not yet usable. Do NOT retry this spawn. Tell the user the \
+                 connection is in an unusable state and ask them to reconnect '{toolkit}' \
+                 at Settings → Connections → '{toolkit}'."
+            )
+        }
         _ => format!(
             "Integration '{toolkit}' is available but the user has not authorized it \
              yet. Do NOT retry this spawn. Tell the user the integration is available \
@@ -1006,10 +1020,38 @@ mod tests {
 
     #[test]
     fn describe_unconnected_state_quotes_unknown_status_verbatim() {
-        let msg = describe_unconnected_state("gmail", Some("DEAUTH_REQUIRED"));
+        // Pin three shapes (uppercase / mixed / snake_case) so the
+        // verbatim-quoting contract can't silently drift back to
+        // echoing the matched (uppercased) value — that was the
+        // CodeRabbit finding on #2373.
+        for raw in ["DEAUTH_REQUIRED", "needs_relink", "PartialAuthRequired"] {
+            let msg = describe_unconnected_state("gmail", Some(raw));
+            let expected = format!("`{raw}`");
+            assert!(
+                msg.contains(&expected),
+                "unknown status `{raw}` must be quoted verbatim (not its uppercased form): {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn describe_unconnected_state_quotes_unknown_status_after_trimming_whitespace() {
+        // Whitespace-only / blank statuses must NOT hit the
+        // unknown-status branch — they collapse to the
+        // truly-disconnected legacy copy via the `filter(|s|
+        // !s.is_empty())` guard in `describe_unconnected_state`.
+        let blank = describe_unconnected_state("gmail", Some("   "));
         assert!(
-            msg.contains("`DEAUTH_REQUIRED`"),
-            "unknown statuses must be quoted so triage can act on them: {msg}"
+            blank.contains("has not authorized it yet"),
+            "whitespace-only status must collapse to legacy None branch: {blank}"
+        );
+        // A real status with surrounding whitespace is quoted with
+        // the whitespace trimmed (not preserved verbatim — triage
+        // would not want padded backticks).
+        let padded = describe_unconnected_state("gmail", Some("  DeauthRequired  "));
+        assert!(
+            padded.contains("`DeauthRequired`"),
+            "trimmed status must be quoted in original casing: {padded}"
         );
     }
 
