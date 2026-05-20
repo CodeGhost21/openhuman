@@ -116,6 +116,32 @@ describe('oauthAuthReadiness', () => {
     expect(result).toEqual({ ready: true });
   });
 
+  it('returns bootstrap_timeout when ping succeeds but bootstrap never finishes', async () => {
+    vi.mocked(getCoreStateSnapshot).mockReturnValue({
+      isBootstrapping: true,
+      isReady: false,
+      snapshot: {
+        sessionToken: null,
+        auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
+        currentUser: null,
+        onboardingCompleted: false,
+        chatOnboardingCompleted: false,
+        analyticsEnabled: false,
+        meetAutoOrchestratorHandoff: false,
+        localState: { encryptionKey: null, onboardingTasks: null },
+        runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
+      },
+      teams: [],
+      teamMembersById: {},
+      teamInvitesById: {},
+    });
+
+    const result = await waitForOAuthAuthReadiness(600);
+
+    expect(result).toEqual({ ready: false, reason: 'bootstrap_timeout' });
+    expect(oauthAuthReadinessUserMessage('bootstrap_timeout')).toMatch(/starting up/i);
+  });
+
   it('does not start the local core on web builds', async () => {
     vi.mocked(isTauri).mockReturnValue(false);
 
