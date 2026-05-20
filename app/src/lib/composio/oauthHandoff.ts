@@ -18,7 +18,12 @@ export function isMetaOAuthToolkit(slug: string): slug is MetaOAuthToolkit {
 /** True when an error message looks like an OAuth / Meta rate limit (HTTP 429). */
 export function isOAuthRateLimitedError(err: unknown): boolean {
   if (!err) return false;
-  const msg = err instanceof Error ? err.message : String(err);
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'object' && err !== null && 'message' in err
+        ? String((err as { message?: unknown }).message ?? '')
+        : String(err);
   const lower = msg.toLowerCase();
   return (
     lower.includes('429') ||
@@ -31,9 +36,15 @@ export function isOAuthRateLimitedError(err: unknown): boolean {
 
 /** User-facing copy when Meta OAuth is rate-limited. */
 export function metaOAuthRateLimitMessage(toolkitName: string): string {
+  const normalizedName = toolkitName.trim().toLowerCase();
+  const accountHint =
+    normalizedName === 'instagram'
+      ? ' Use an Instagram Business or Creator account — personal accounts are not supported.'
+      : normalizedName === 'facebook'
+        ? ' Confirm the Facebook account has access to the relevant Page or Business Manager.'
+        : '';
   return (
     `Meta is temporarily rate-limiting ${toolkitName} sign-in (HTTP 429). ` +
-    'Wait a few minutes before retrying, avoid clicking Connect repeatedly, and use ' +
-    'an Instagram Business or Creator account — personal accounts are not supported.'
+    `Wait a few minutes before retrying and avoid clicking Connect repeatedly.${accountHint}`
   );
 }

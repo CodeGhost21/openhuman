@@ -52,10 +52,16 @@ pub fn is_authorize_rate_limited(err: &str) -> bool {
 /// User-facing hint when Meta OAuth is rate-limited.
 pub fn meta_oauth_rate_limit_message(toolkit: &str) -> String {
     let name = toolkit.trim();
+    let account_hint = if name.eq_ignore_ascii_case("instagram") {
+        " Use an Instagram Business or Creator account — personal accounts are not supported."
+    } else if name.eq_ignore_ascii_case("facebook") {
+        " Confirm the Facebook account has access to the relevant Page or Business Manager."
+    } else {
+        ""
+    };
     format!(
         "Meta is temporarily rate-limiting {name} sign-in (HTTP 429). Wait a few \
-         minutes before retrying, avoid clicking Connect repeatedly, and use an \
-         Instagram Business or Creator account — personal accounts are not supported."
+         minutes before retrying and avoid clicking Connect repeatedly.{account_hint}"
     )
 }
 

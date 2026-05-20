@@ -81,6 +81,14 @@ fn meta_oauth_rate_limit_message_mentions_business_account() {
     assert!(msg.to_ascii_lowercase().contains("business"));
 }
 
+#[test]
+fn meta_oauth_rate_limit_message_uses_facebook_specific_guidance() {
+    let msg = meta_oauth_rate_limit_message("facebook");
+    assert!(msg.contains("Facebook"));
+    assert!(msg.contains("Business Manager"));
+    assert!(!msg.contains("Instagram Business or Creator"));
+}
+
 #[tokio::test]
 async fn authorize_continues_when_pre_handoff_cleanup_fails() {
     let app = Router::new()

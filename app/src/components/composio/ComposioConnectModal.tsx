@@ -177,6 +177,7 @@ export default function ComposioConnectModal({
   const pollDeadlineRef = useRef<number>(0);
   const isPollingRef = useRef<boolean>(false);
   const inFlightRef = useRef<boolean>(false);
+  const connectInFlightRef = useRef<boolean>(false);
   const [connectInFlight, setConnectInFlight] = useState(false);
 
   const initialState = deriveComposioState(connection);
@@ -333,7 +334,7 @@ export default function ComposioConnectModal({
   }, [requiredFields, fieldValues]);
 
   const handleConnect = useCallback(async () => {
-    if (connectInFlight) {
+    if (connectInFlightRef.current) {
       console.debug(
         '[composio][authorize] ignored duplicate Connect click toolkit=%s',
         toolkit.slug
@@ -342,6 +343,7 @@ export default function ComposioConnectModal({
     }
     if (!validateRequiredFields()) return;
 
+    connectInFlightRef.current = true;
     setConnectInFlight(true);
     setPhase('authorizing');
     setError(null);
@@ -412,10 +414,10 @@ export default function ComposioConnectModal({
         setError(sanitizeAuthError(err));
       }
     } finally {
+      connectInFlightRef.current = false;
       setConnectInFlight(false);
     }
   }, [
-    connectInFlight,
     validateRequiredFields,
     requiredFields,
     fieldValues,
