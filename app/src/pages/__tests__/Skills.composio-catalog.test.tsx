@@ -30,6 +30,16 @@ vi.mock('../../lib/composio/hooks', () => ({
     loading: false,
     error: composioError,
   }),
+  // Issue #2283: Skills.tsx now also consumes useAgentReadyComposioToolkits.
+  // `loading: true` is the safe default for legacy tests that don't
+  // assert on Preview-badge rendering — while the agent-ready set is
+  // loading, every tile is treated as agent-ready and no badge renders,
+  // preserving the pre-#2283 aria-label / role text these tests assert on.
+  useAgentReadyComposioToolkits: () => ({
+    agentReady: new Set<string>(),
+    loading: true,
+    error: null,
+  }),
 }));
 
 describe('Skills page — Composio catalog fallback', () => {
