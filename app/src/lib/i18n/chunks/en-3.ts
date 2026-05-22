@@ -374,6 +374,9 @@ const en3: TranslationMap = {
   'channels.telegram.managedDmConnecting': 'Managed dm connecting',
   'channels.telegram.managedDmTimeout': 'Managed dm timeout',
   'channels.telegram.reconnect': 'Reconnect',
+  'channels.telegram.remoteControl.description':
+    'From an allowed Telegram chat, send /status, /sessions, /new, or /help. Model routing still uses /model and /models.',
+  'channels.telegram.remoteControl.title': 'Remote control (Telegram)',
   'channels.telegram.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.web.alwaysAvailable': 'Always available',
 };

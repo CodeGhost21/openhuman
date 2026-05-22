@@ -380,6 +380,9 @@ const it3: TranslationMap = {
   'channels.telegram.managedDmConnecting': 'Connessione DM gestiti',
   'channels.telegram.managedDmTimeout': 'Timeout DM gestiti',
   'channels.telegram.reconnect': 'Riconnetti',
+  'channels.telegram.remoteControl.description':
+    'Da una chat Telegram consentita, invia /status, /sessions, /new o /help. Il routing del modello usa ancora /model e /models.',
+  'channels.telegram.remoteControl.title': 'Controllo remoto (Telegram)',
   'channels.telegram.savedRestartRequired': "Canale salvato. Riavvia l'app per attivarlo.",
   'channels.web.alwaysAvailable': 'Sempre disponibile',
 };

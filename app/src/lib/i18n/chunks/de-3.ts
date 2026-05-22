@@ -383,6 +383,9 @@ const de3: TranslationMap = {
   'channels.telegram.managedDmConnecting': 'Verwaltete DM-Verbindung',
   'channels.telegram.managedDmTimeout': 'DM-Timeout verwaltet',
   'channels.telegram.reconnect': 'Wieder verbinden',
+  'channels.telegram.remoteControl.description':
+    'Sende aus einem erlaubten Telegram-Chat /status, /sessions, /new oder /help. Modell-Routing verwendet weiterhin /model und /models.',
+  'channels.telegram.remoteControl.title': 'Fernsteuerung (Telegram)',
   'channels.telegram.savedRestartRequired':
     'Kanal gespeichert. Starte die App neu, um sie zu aktivieren.',
   'channels.web.alwaysAvailable': 'Immer verfügbar',

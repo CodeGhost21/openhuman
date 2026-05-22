@@ -376,6 +376,9 @@ const ru3: TranslationMap = {
   'channels.telegram.managedDmConnecting': 'Подключение управляемого DM',
   'channels.telegram.managedDmTimeout': 'Таймаут управляемого DM',
   'channels.telegram.reconnect': 'Переподключить',
+  'channels.telegram.remoteControl.description':
+    'Из разрешённого чата Telegram отправь /status, /sessions, /new или /help. Выбор модели по-прежнему через /model и /models.',
+  'channels.telegram.remoteControl.title': 'Дистанционное управление (Telegram)',
   'channels.telegram.savedRestartRequired': 'Канал сохранён. Перезапусти приложение для активации.',
   'channels.web.alwaysAvailable': 'Всегда доступно',
 };

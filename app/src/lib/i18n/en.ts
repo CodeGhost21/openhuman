@@ -1349,6 +1349,9 @@ const en: TranslationMap = {
   'channels.telegram.managedDmConnecting': 'Connecting your Telegram account…',
   'channels.telegram.managedDmTimeout': 'Connection timed out. Please try again.',
   'channels.telegram.reconnect': 'Reconnect',
+  'channels.telegram.remoteControl.description':
+    'From an allowed Telegram chat, send /status, /sessions, /new, or /help. Model routing still uses /model and /models.',
+  'channels.telegram.remoteControl.title': 'Remote control (Telegram)',
   'channels.telegram.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.web.alwaysAvailable': 'Always available',
   'chat.unsubscribeApproval.approve': 'Approve & Unsubscribe',

@@ -376,6 +376,9 @@ const ko3: TranslationMap = {
   'channels.telegram.managedDmConnecting': '관리형 DM 연결 중',
   'channels.telegram.managedDmTimeout': '관리형 DM 시간이 초과됨',
   'channels.telegram.reconnect': '다시 연결',
+  'channels.telegram.remoteControl.description':
+    '허용된 Telegram 채팅에서 /status, /sessions, /new 또는 /help를 보내세요. 모델 라우팅은 /model과 /models를 사용합니다.',
+  'channels.telegram.remoteControl.title': '원격 제어 (Telegram)',
   'channels.telegram.savedRestartRequired':
     '채널이 저장되었습니다. 활성화하려면 앱을 다시 시작하세요.',
   'channels.web.alwaysAvailable': '항상 사용 가능',

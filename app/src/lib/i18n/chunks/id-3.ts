@@ -379,6 +379,9 @@ const id3: TranslationMap = {
   'channels.telegram.managedDmConnecting': 'DM terkelola menghubungkan',
   'channels.telegram.managedDmTimeout': 'Waktu DM terkelola habis',
   'channels.telegram.reconnect': 'Hubungkan ulang',
+  'channels.telegram.remoteControl.description':
+    'Dari obrolan Telegram yang diizinkan, kirim /status, /sessions, /new, atau /help. Perutean model tetap menggunakan /model dan /models.',
+  'channels.telegram.remoteControl.title': 'Kontrol jarak jauh (Telegram)',
   'channels.telegram.savedRestartRequired':
     'Kanal tersimpan. Mulai ulang aplikasi untuk mengaktifkannya.',
   'channels.web.alwaysAvailable': 'Selalu tersedia',

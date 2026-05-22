@@ -376,6 +376,9 @@ const hi3: TranslationMap = {
   'channels.telegram.managedDmConnecting': 'मैनेज्ड DM कनेक्ट हो रहा है',
   'channels.telegram.managedDmTimeout': 'मैनेज्ड DM टाइमआउट',
   'channels.telegram.reconnect': 'फिर से कनेक्ट करें',
+  'channels.telegram.remoteControl.description':
+    'अनुमत Telegram चैट से /status, /sessions, /new या /help भेजें। मॉडल रूटिंग /model और /models का उपयोग करती रहती है।',
+  'channels.telegram.remoteControl.title': 'रिमोट कंट्रोल (Telegram)',
   'channels.telegram.savedRestartRequired':
     'चैनल सेव हो गया। एक्टिवेट करने के लिए ऐप रीस्टार्ट करें।',
   'channels.web.alwaysAvailable': 'हमेशा उपलब्ध',

@@ -164,9 +164,14 @@ async fn build_sessions_response(ctx: &ChannelRuntimeContext, msg: &ChannelMessa
     .ok()
     .and_then(|res| res.ok())
     .flatten();
-    let workspace = ctx.workspace_dir.as_path();
-
-    let threads = match conversations::list_threads(workspace.to_path_buf()) {
+    let workspace_dir = ctx.workspace_dir.clone();
+    // list_threads does synchronous filesystem I/O — offload to a blocking thread.
+    let threads = match tokio::task::spawn_blocking(move || {
+        conversations::list_threads(workspace_dir.to_path_buf())
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("join error: {e}")))
+    {
         Ok(list) => list,
         Err(error) => {
             tracing::warn!("{LOG_PREFIX} sessions: list_threads failed: {error}");
@@ -213,7 +218,6 @@ fn format_session_line(thread: &ConversationThread, active_id: Option<&str>) -> 
 }
 
 async fn build_new_session_response(ctx: &ChannelRuntimeContext, msg: &ChannelMessage) -> String {
-    let workspace = ctx.workspace_dir.as_path();
     let sender_key = conversation_history_key(msg);
     let thread_id = format!("thread-{}", uuid::Uuid::new_v4());
     let now = chrono::Utc::now();
@@ -224,21 +228,28 @@ async fn build_new_session_response(ctx: &ChannelRuntimeContext, msg: &ChannelMe
     );
     let created_at = now.to_rfc3339();
 
-    if let Err(error) = conversations::ensure_thread(
-        workspace.to_path_buf(),
-        CreateConversationThread {
-            id: thread_id.clone(),
-            title: title.clone(),
-            created_at,
-            parent_thread_id: None,
-            labels: Some(vec!["telegram".to_string(), "remote".to_string()]),
-        },
-    ) {
+    // ensure_thread does synchronous filesystem I/O — offload to a blocking thread.
+    let workspace_dir = ctx.workspace_dir.clone();
+    let thread_id_for_create = thread_id.clone();
+    let title_for_create = title.clone();
+    if let Err(error) = tokio::task::spawn_blocking(move || {
+        conversations::ensure_thread(
+            workspace_dir.to_path_buf(),
+            CreateConversationThread {
+                id: thread_id_for_create,
+                title: title_for_create,
+                created_at,
+                parent_thread_id: None,
+                labels: Some(vec!["telegram".to_string(), "remote".to_string()]),
+            },
+        )
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("join error: {e}")))
+    {
         tracing::warn!("{LOG_PREFIX} new: ensure_thread failed: {error}");
         return format!("Failed to create session: {error}");
     }
-
-    clear_sender_history(ctx, &sender_key);
 
     let workspace_dir = ctx.workspace_dir.clone();
     let reply_target_owned = msg.reply_target.clone();
@@ -262,11 +273,16 @@ async fn build_new_session_response(ctx: &ChannelRuntimeContext, msg: &ChannelMe
 
     if let Err(error) = bind_result {
         tracing::warn!("{LOG_PREFIX} new: persist binding failed: {error}");
+        // Binding failed — do NOT clear history; leave conversation state intact
+        // so the user can retry or use the existing thread.
+        // TODO: consider rolling back the created thread on persistent write failure.
         return format!(
             "Created thread `{thread_id}` but failed to persist Telegram binding: {error}"
         );
     }
 
+    // Binding persisted successfully — now it is safe to clear in-memory history.
+    clear_sender_history(ctx, &sender_key);
     crate::openhuman::channels::providers::web::invalidate_thread_sessions(&thread_id).await;
 
     tracing::info!(

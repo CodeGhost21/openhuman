@@ -372,6 +372,9 @@ const ar3: TranslationMap = {
   'channels.telegram.managedDmConnecting': 'جارٍ اتصال الرسائل المباشرة المُدارة',
   'channels.telegram.managedDmTimeout': 'انتهت مهلة الرسائل المباشرة المُدارة',
   'channels.telegram.reconnect': 'إعادة الاتصال',
+  'channels.telegram.remoteControl.description':
+    'من دردشة Telegram مسموح بها، أرسل /status أو /sessions أو /new أو /help. يستمر توجيه النموذج في استخدام /model و/models.',
+  'channels.telegram.remoteControl.title': 'التحكم عن بُعد (Telegram)',
   'channels.telegram.savedRestartRequired': 'تم حفظ القناة. أعد تشغيل التطبيق لتفعيلها.',
   'channels.web.alwaysAvailable': 'متاح دائمًا',
 };

@@ -365,6 +365,9 @@ const zhCN3: TranslationMap = {
   'channels.telegram.managedDmConnecting': '正在连接私信',
   'channels.telegram.managedDmTimeout': '私信连接超时',
   'channels.telegram.reconnect': '重新连接',
+  'channels.telegram.remoteControl.description':
+    '从已允许的 Telegram 聊天中发送 /status、/sessions、/new 或 /help。模型路由仍使用 /model 和 /models。',
+  'channels.telegram.remoteControl.title': '远程控制 (Telegram)',
   'channels.telegram.savedRestartRequired': '频道已保存。重启应用以激活。',
   'channels.web.alwaysAvailable': '始终可用',
 };

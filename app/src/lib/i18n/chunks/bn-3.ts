@@ -375,6 +375,9 @@ const bn3: TranslationMap = {
   'channels.telegram.managedDmConnecting': 'ম্যানেজড DM সংযোগ হচ্ছে',
   'channels.telegram.managedDmTimeout': 'ম্যানেজড DM টাইমআউট',
   'channels.telegram.reconnect': 'পুনরায় সংযুক্ত করুন',
+  'channels.telegram.remoteControl.description':
+    'অনুমোদিত Telegram চ্যাট থেকে /status, /sessions, /new বা /help পাঠান। মডেল রাউটিং /model এবং /models ব্যবহার করতে থাকে।',
+  'channels.telegram.remoteControl.title': 'রিমোট কন্ট্রোল (Telegram)',
   'channels.telegram.savedRestartRequired': 'চ্যানেল সংরক্ষিত। সক্রিয় করতে অ্যাপ রিস্টার্ট করুন।',
   'channels.web.alwaysAvailable': 'সর্বদা পাওয়া যায়',
 };
