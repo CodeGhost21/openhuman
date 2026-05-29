@@ -119,10 +119,10 @@ composio/periodic.rs                 sync_status/{types,rpc}.rs            Memor
   (same slot as today's connection-status badge).
 - **Types:** extend the `MemorySyncStatus` TS type in `services/memorySyncService.ts` to
   add `health`, `last_error`, `last_error_at_ms`, plus an `IntegrationHealth` union.
-- **i18n:** add new keys (`sync.healthStale`, `sync.healthError`, `sync.syncError` label,
-  etc.) to `app/src/lib/i18n/en.ts` **and** `chunks/en-1.ts` (same chunk as the panel)
-  **and** the chunk-1 file for every locale (ar, bn, de, es, fr, hi, id, it, ko, pl, pt,
-  ru, zh-CN) using the English value as a placeholder. `pnpm i18n:check` enforces parity.
+- **i18n:** add new keys (`sync.statusStale`, `sync.statusError`, `sync.lastError`) to
+  `app/src/lib/i18n/en.ts` **and** `chunks/en-3.ts` (the chunk that holds the `sync.*`
+  namespace) **and** the chunk-3 file for every locale (ar, bn, de, es, fr, hi, id, it, ko,
+  pl, pt, ru, zh-CN) using the English value as a placeholder. `pnpm i18n:check` enforces parity.
 
 ## Testing (≥80% changed-line coverage gate)
 
@@ -172,7 +172,7 @@ i18n across all locales, and the tests above.
 | List renders below `MemoryTreeStatusPanel`, visible from `/intelligence` + Settings → Memory data | `MemorySources` is already mounted there (`MemoryWorkspace.tsx:225`); enhanced in place. |
 | Empty state matches `MemorySources` convention | Already present and unchanged. |
 | Polling shares parent (no double poll) | `MemorySources` keeps its own existing 5 s poll; we do not add a second loop. |
-| i18n parity across 14 locales | New keys added to `en.ts` + `chunks/*-1.ts` for all locales; `pnpm i18n:check` gate. |
+| i18n parity across 14 locales | New keys added to `en.ts` + `chunks/*-3.ts` for all locales; `pnpm i18n:check` gate. |
 | Diff coverage ≥ 80% | Rust + Vitest tests above target changed lines. |
 
 > Note: one #2763 criterion (a dedicated per-integration RPC `integrations` field on
