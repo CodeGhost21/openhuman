@@ -37,9 +37,12 @@
 //!     the scheduler from redundantly re-firing. The map is rebuilt on
 //!     restart, which is fine — a missed periodic sync is harmless
 //!     because the next tick after restart picks it back up immediately.
-//!   * Errors are logged and swallowed; the scheduler must never panic
+//!   * Errors are logged and swallowed (the scheduler must never panic
 //!     out of its loop or periodic sync stops silently for the rest of
-//!     the process lifetime.
+//!     the process lifetime). A per-failure record is also written to a
+//!     parallel `LAST_SYNC_ERROR` map keyed by `(toolkit, connection_id)`
+//!     and cleared on the next success, so the Memory Tree
+//!     integration-health list can surface real sync failures (#2763).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -598,7 +601,10 @@ mod tests {
     fn snapshot_collapses_connections_keeping_most_recent() {
         let toolkit = "test_err_toolkit_c";
         record_sync_error(toolkit, "conn-1", "older");
-        std::thread::sleep(Duration::from_millis(3));
+        // >= one coarse Windows timer tick (~15 ms) so the two wall-clock
+        // `at_ms` values are distinct and the most-recent-wins assertion
+        // below is deterministic across platforms.
+        std::thread::sleep(Duration::from_millis(20));
         record_sync_error(toolkit, "conn-2", "newer");
         let snap = error_snapshot_by_toolkit();
         let rec = snap.get(toolkit).expect("toolkit present");
