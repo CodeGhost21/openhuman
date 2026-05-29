@@ -235,4 +235,28 @@ mod tests {
             IntegrationHealth::Stale
         );
     }
+
+    #[test]
+    fn health_active_at_exactly_two_intervals() {
+        let now = 1_777_000_000_000;
+        // Exactly 2× the interval (the window is inclusive `<=`) ⇒ Active,
+        // pinning the boundary against an accidental switch to `<`.
+        let h = IntegrationHealth::derive(
+            Some(now - 2 * (TEST_INTERVAL_SECS as i64) * 1000),
+            None,
+            now,
+            TEST_INTERVAL_SECS,
+        );
+        assert_eq!(h, IntegrationHealth::Active);
+    }
+
+    #[test]
+    fn health_not_error_when_error_equals_chunk_timestamp() {
+        let now = 1_777_000_000_000;
+        // Same-ms error and chunk: the strict `>` means this is NOT Error;
+        // the recent chunk wins ⇒ Active. Guards the tie-break semantics.
+        let ts = now - 60_000;
+        let h = IntegrationHealth::derive(Some(ts), Some(ts), now, TEST_INTERVAL_SECS);
+        assert_eq!(h, IntegrationHealth::Active);
+    }
 }

@@ -198,9 +198,9 @@ fn query_sync_statuses(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<M
             batch_processed: batch_processed.max(0) as u64,
             last_chunk_at_ms,
             freshness: FreshnessLabel::from_age_ms(last_chunk_at_ms, now_ms),
-            // Provisional; `finalize_health` in `status_list_rpc` sets the
-            // real value (it has the error snapshot + interval). Never
-            // user-visible because finalize always runs.
+            // Provisional default; `status_list_rpc` recomputes `health`
+            // (and fills `last_error*`) via `finalize_health` before
+            // returning, so callers receive the finalized value, not this one.
             health: IntegrationHealth::Stale,
             last_error: None,
             last_error_at_ms: None,
