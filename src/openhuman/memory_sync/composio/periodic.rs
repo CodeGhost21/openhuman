@@ -97,12 +97,84 @@ fn last_sync_map() -> SyncTimestampMap {
 /// event-driven paths (bus subscribers, `on_connection_created`) so the
 /// periodic ticker respects recent non-periodic syncs.
 pub fn record_sync_success(toolkit: &str, connection_id: &str) {
+    let key = (toolkit.to_string(), connection_id.to_string());
     if let Ok(mut map) = last_sync_map().lock() {
+        map.insert(key.clone(), Instant::now());
+    }
+    // A success supersedes any prior failure for this connection.
+    if let Ok(mut errors) = last_error_map().lock() {
+        errors.remove(&key);
+    }
+}
+
+/// One recorded sync failure for a `(toolkit, connection_id)`. Uses a
+/// wall-clock `at_ms` (NOT a monotonic `Instant`) so it's directly comparable
+/// to a chunk's `timestamp_ms` when deriving health. In-memory only — rebuilt
+/// on restart, exactly like [`LAST_SYNC_AT`].
+#[derive(Clone, Debug)]
+pub struct SyncErrorRecord {
+    pub message: String,
+    pub at_ms: i64,
+}
+
+type SyncErrorMap = Arc<Mutex<HashMap<(String, String), SyncErrorRecord>>>;
+
+static LAST_SYNC_ERROR: OnceLock<SyncErrorMap> = OnceLock::new();
+
+/// Longest error message we retain — defends the in-memory map and the RPC
+/// payload against a pathologically long provider error string.
+const MAX_ERROR_LEN: usize = 500;
+
+fn last_error_map() -> SyncErrorMap {
+    LAST_SYNC_ERROR
+        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+        .clone()
+}
+
+/// Record a failed sync for `(toolkit, connection_id)`, overwriting any prior
+/// error for the same key. Called from the periodic loop's failure arm so the
+/// Memory Tree integration-health list (#2763) can surface real failures.
+pub fn record_sync_error(toolkit: &str, connection_id: &str, message: &str) {
+    // char-safe truncation (byte-index `String::truncate` can panic on a
+    // multi-byte boundary).
+    let msg: String = message.trim().chars().take(MAX_ERROR_LEN).collect();
+    if let Ok(mut map) = last_error_map().lock() {
         map.insert(
             (toolkit.to_string(), connection_id.to_string()),
-            Instant::now(),
+            SyncErrorRecord {
+                message: msg,
+                at_ms: chrono::Utc::now().timestamp_millis(),
+            },
         );
     }
+}
+
+/// Most recent recorded sync error per *toolkit*, collapsing connection_ids
+/// (any failing connection marks the toolkit). Keyed by toolkit slug to line
+/// up with the `provider` field of `memory_sync_status_list` (provider ==
+/// toolkit slug for the syncable set). Cloned out so callers don't hold the
+/// lock.
+pub fn error_snapshot_by_toolkit() -> HashMap<String, SyncErrorRecord> {
+    let mut out: HashMap<String, SyncErrorRecord> = HashMap::new();
+    if let Ok(map) = last_error_map().lock() {
+        for ((toolkit, _conn), rec) in map.iter() {
+            out.entry(toolkit.clone())
+                .and_modify(|existing| {
+                    if rec.at_ms > existing.at_ms {
+                        *existing = rec.clone();
+                    }
+                })
+                .or_insert_with(|| rec.clone());
+        }
+    }
+    out
+}
+
+/// The periodic auto-fetch tick interval, in seconds. Exposed so the
+/// sync-status health classifier can reason about staleness relative to how
+/// often the loop actually fires.
+pub fn auto_fetch_interval_secs() -> u64 {
+    TICK_SECONDS
 }
 
 /// Spawn the periodic sync background task. Idempotent: only the
@@ -348,6 +420,9 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
                     error = %e,
                     "[composio:periodic] sync failed (will retry next tick)"
                 );
+                // Surface the failure to the Memory Tree integration-health
+                // list (#2763). In-memory; cleared on the next success.
+                record_sync_error(&conn.toolkit, &conn.id, &e.to_string());
                 // Intentionally do NOT update last_sync_at on failure
                 // so the next tick retries immediately.
             }
@@ -495,5 +570,53 @@ mod tests {
              got {:?}",
             periodic_pause_reason()
         );
+    }
+
+    #[test]
+    fn record_sync_error_is_visible_in_snapshot_by_toolkit() {
+        let toolkit = "test_err_toolkit_a";
+        record_sync_error(toolkit, "conn-a", "boom 401");
+        let snap = error_snapshot_by_toolkit();
+        let rec = snap.get(toolkit).expect("error recorded for toolkit");
+        assert_eq!(rec.message, "boom 401");
+        assert!(rec.at_ms > 0);
+    }
+
+    #[test]
+    fn record_sync_success_clears_the_error() {
+        let toolkit = "test_err_toolkit_b";
+        record_sync_error(toolkit, "conn-b", "transient");
+        record_sync_success(toolkit, "conn-b");
+        let snap = error_snapshot_by_toolkit();
+        assert!(
+            snap.get(toolkit).is_none(),
+            "a success must clear the prior error for the same key"
+        );
+    }
+
+    #[test]
+    fn snapshot_collapses_connections_keeping_most_recent() {
+        let toolkit = "test_err_toolkit_c";
+        record_sync_error(toolkit, "conn-1", "older");
+        std::thread::sleep(Duration::from_millis(3));
+        record_sync_error(toolkit, "conn-2", "newer");
+        let snap = error_snapshot_by_toolkit();
+        let rec = snap.get(toolkit).expect("toolkit present");
+        assert_eq!(rec.message, "newer", "most recent error wins at toolkit level");
+    }
+
+    #[test]
+    fn record_sync_error_truncates_long_messages() {
+        let toolkit = "test_err_toolkit_d";
+        let long = "x".repeat(5000);
+        record_sync_error(toolkit, "conn-d", &long);
+        let snap = error_snapshot_by_toolkit();
+        let rec = snap.get(toolkit).expect("toolkit present");
+        assert_eq!(rec.message.chars().count(), MAX_ERROR_LEN);
+    }
+
+    #[test]
+    fn auto_fetch_interval_secs_matches_tick() {
+        assert_eq!(auto_fetch_interval_secs(), TICK_SECONDS);
     }
 }
