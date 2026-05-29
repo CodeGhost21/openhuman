@@ -125,6 +125,13 @@ pub struct MemorySyncStatus {
     pub last_chunk_at_ms: Option<i64>,
     /// Derived from `last_chunk_at_ms` at RPC time.
     pub freshness: FreshnessLabel,
+    /// Operational health folding in the sync-error signal (see
+    /// [`IntegrationHealth`]). Finalized in `status_list_rpc`.
+    pub health: IntegrationHealth,
+    /// Most recent recorded sync-error message for this provider, if any.
+    pub last_error: Option<String>,
+    /// Wall-clock ms of the most recent recorded sync error, if any.
+    pub last_error_at_ms: Option<i64>,
 }
 
 /// Wire shape of `openhuman.memory_sync_status_list`.

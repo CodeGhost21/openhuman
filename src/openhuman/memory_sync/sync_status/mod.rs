@@ -21,4 +21,4 @@ pub use schemas::{
     all_controller_schemas as all_memory_sync_status_controller_schemas,
     all_registered_controllers as all_memory_sync_status_registered_controllers,
 };
-pub use types::{FreshnessLabel, MemorySyncStatus};
+pub use types::{FreshnessLabel, IntegrationHealth, MemorySyncStatus};

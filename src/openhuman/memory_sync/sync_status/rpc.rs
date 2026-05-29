@@ -48,7 +48,7 @@ use crate::openhuman::memory_store::chunks::store::with_connection;
 use crate::rpc::RpcOutcome;
 use rusqlite::Connection;
 
-use super::types::{FreshnessLabel, MemorySyncStatus, StatusListResponse};
+use super::types::{FreshnessLabel, IntegrationHealth, MemorySyncStatus, StatusListResponse};
 
 /// Sliding window used to identify a "current sync wave". Chunks
 /// within this many ms of `MAX(created_at_ms)` for a provider count
@@ -198,6 +198,12 @@ fn query_sync_statuses(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<M
             batch_processed: batch_processed.max(0) as u64,
             last_chunk_at_ms,
             freshness: FreshnessLabel::from_age_ms(last_chunk_at_ms, now_ms),
+            // Provisional; `finalize_health` in `status_list_rpc` sets the
+            // real value (it has the error snapshot + interval). Never
+            // user-visible because finalize always runs.
+            health: IntegrationHealth::Stale,
+            last_error: None,
+            last_error_at_ms: None,
         })
     })?;
     iter.collect()
