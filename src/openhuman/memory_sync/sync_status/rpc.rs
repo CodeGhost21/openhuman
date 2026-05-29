@@ -43,8 +43,13 @@
 //! deliberately, since they shouldn't pollute the active wave's
 //! progress signal.
 
+use std::collections::HashSet;
+
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::chunks::store::with_connection;
+use crate::openhuman::memory_sync::composio::periodic::{
+    auto_fetch_interval_secs, error_snapshot_by_toolkit, SyncErrorRecord,
+};
 use crate::rpc::RpcOutcome;
 use rusqlite::Connection;
 
@@ -61,31 +66,36 @@ const WAVE_WINDOW_MS: i64 = 10 * 60 * 1000;
 pub async fn status_list_rpc(config: &Config) -> Result<RpcOutcome<StatusListResponse>, String> {
     tracing::debug!("[memory_sync_status][rpc] status_list");
 
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let errors = error_snapshot_by_toolkit();
+    let interval_secs = auto_fetch_interval_secs();
+
     let config = config.clone();
-    let statuses: Vec<MemorySyncStatus> = match tokio::task::spawn_blocking(move || {
+    let mut statuses: Vec<MemorySyncStatus> = match tokio::task::spawn_blocking(move || {
         with_connection(&config, |conn| -> anyhow::Result<Vec<MemorySyncStatus>> {
-            let now_ms = chrono::Utc::now().timestamp_millis();
             Ok(query_sync_statuses(conn, now_ms)?)
         })
     })
     .await
     {
         Ok(Ok(rows)) => rows,
-        // DB unavailable (open/migration failure) or query error: return empty
-        // so the schema contract (`statuses` array) is always satisfied.
+        // DB unavailable (open/migration failure) or query error: keep going
+        // with an empty list so error-only providers still surface below.
         Ok(Err(e)) => {
             tracing::warn!(
-                "[memory_sync_status][rpc] DB query failed, returning empty statuses: {e:#}"
+                "[memory_sync_status][rpc] DB query failed, returning error-only statuses: {e:#}"
             );
             vec![]
         }
         Err(e) => {
             tracing::warn!(
-                "[memory_sync_status][rpc] spawn_blocking join error, returning empty statuses: {e}"
+                "[memory_sync_status][rpc] spawn_blocking join error, returning error-only statuses: {e}"
             );
             vec![]
         }
     };
+
+    finalize_health(&mut statuses, &errors, now_ms, interval_secs);
 
     tracing::debug!(
         "[memory_sync_status][rpc] status_list returning {} row(s)",
@@ -209,9 +219,110 @@ fn query_sync_statuses(conn: &Connection, now_ms: i64) -> rusqlite::Result<Vec<M
     iter.collect()
 }
 
+/// Attach per-provider error info, finalize each row's `health`, and append
+/// synthetic rows for toolkits that have *only* an error (never produced a
+/// chunk) so a connected-but-failing integration still shows as Error.
+fn finalize_health(
+    statuses: &mut Vec<MemorySyncStatus>,
+    errors: &std::collections::HashMap<String, SyncErrorRecord>,
+    now_ms: i64,
+    interval_secs: u64,
+) {
+    for s in statuses.iter_mut() {
+        if let Some(rec) = errors.get(&s.provider) {
+            s.last_error = Some(rec.message.clone());
+            s.last_error_at_ms = Some(rec.at_ms);
+        }
+        s.health =
+            IntegrationHealth::derive(s.last_chunk_at_ms, s.last_error_at_ms, now_ms, interval_secs);
+    }
+
+    let present: HashSet<&str> = statuses.iter().map(|s| s.provider.as_str()).collect();
+    let missing: Vec<(String, SyncErrorRecord)> = errors
+        .iter()
+        .filter(|(provider, _)| !present.contains(provider.as_str()))
+        .map(|(p, r)| (p.clone(), r.clone()))
+        .collect();
+    for (provider, rec) in missing {
+        statuses.push(MemorySyncStatus {
+            provider,
+            chunks_synced: 0,
+            chunks_pending: 0,
+            batch_total: 0,
+            batch_processed: 0,
+            last_chunk_at_ms: None,
+            freshness: FreshnessLabel::from_age_ms(None, now_ms),
+            health: IntegrationHealth::Error,
+            last_error: Some(rec.message),
+            last_error_at_ms: Some(rec.at_ms),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::openhuman::memory_sync::composio::periodic::SyncErrorRecord;
+    use std::collections::HashMap;
+
+    fn base_status(provider: &str, last_chunk_at_ms: Option<i64>) -> MemorySyncStatus {
+        MemorySyncStatus {
+            provider: provider.to_string(),
+            chunks_synced: 1,
+            chunks_pending: 0,
+            batch_total: 0,
+            batch_processed: 0,
+            last_chunk_at_ms,
+            freshness: FreshnessLabel::Idle,
+            health: IntegrationHealth::Stale,
+            last_error: None,
+            last_error_at_ms: None,
+        }
+    }
+
+    #[test]
+    fn finalize_marks_error_and_attaches_message() {
+        let now = 1_777_000_000_000;
+        let mut statuses = vec![base_status("gmail", Some(now - 10 * 60_000))];
+        let mut errors = HashMap::new();
+        errors.insert(
+            "gmail".to_string(),
+            SyncErrorRecord { message: "boom 401".into(), at_ms: now - 60_000 },
+        );
+        finalize_health(&mut statuses, &errors, now, 1200);
+        assert_eq!(statuses[0].health, IntegrationHealth::Error);
+        assert_eq!(statuses[0].last_error.as_deref(), Some("boom 401"));
+        assert_eq!(statuses[0].last_error_at_ms, Some(now - 60_000));
+    }
+
+    #[test]
+    fn finalize_marks_active_when_recent_and_no_error() {
+        let now = 1_777_000_000_000;
+        let mut statuses = vec![base_status("slack", Some(now - 60_000))];
+        finalize_health(&mut statuses, &HashMap::new(), now, 1200);
+        assert_eq!(statuses[0].health, IntegrationHealth::Active);
+        assert!(statuses[0].last_error.is_none());
+    }
+
+    #[test]
+    fn finalize_appends_synthetic_row_for_error_only_provider() {
+        let now = 1_777_000_000_000;
+        let mut statuses = vec![base_status("gmail", Some(now - 60_000))];
+        let mut errors = HashMap::new();
+        errors.insert(
+            "notion".to_string(),
+            SyncErrorRecord { message: "auth expired".into(), at_ms: now - 30_000 },
+        );
+        finalize_health(&mut statuses, &errors, now, 1200);
+        let notion = statuses
+            .iter()
+            .find(|s| s.provider == "notion")
+            .expect("synthetic error-only row appended");
+        assert_eq!(notion.health, IntegrationHealth::Error);
+        assert_eq!(notion.chunks_synced, 0);
+        assert_eq!(notion.last_error.as_deref(), Some("auth expired"));
+    }
 
     #[test]
     fn status_list_response_serializes_statuses_array() {
