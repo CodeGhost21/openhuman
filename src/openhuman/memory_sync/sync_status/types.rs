@@ -46,6 +46,55 @@ impl FreshnessLabel {
     }
 }
 
+/// Operational health of one integration's memory-tree feed. Distinct from
+/// [`FreshnessLabel`] (a pure recency axis): `health` folds in a real sync
+/// *error* signal and is aware of the auto-fetch interval.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntegrationHealth {
+    Active,
+    Stale,
+    Error,
+}
+
+impl IntegrationHealth {
+    /// Precedence: **Error > Active > Stale**.
+    ///
+    /// * `Error` when a recorded sync error is newer than the last successful
+    ///   chunk (or there is no chunk at all) — the most recent thing that
+    ///   happened to this source was a failure.
+    /// * `Active` when the last chunk landed within `2 × interval_secs`
+    ///   (lenient so a healthy source doesn't flap to Stale right before its
+    ///   next scheduled tick).
+    /// * `Stale` otherwise — quiet or quietly behind, but not a known failure
+    ///   (so a low-traffic source like an empty inbox doesn't false-alarm).
+    pub fn derive(
+        last_chunk_at_ms: Option<i64>,
+        last_error_at_ms: Option<i64>,
+        now_ms: i64,
+        interval_secs: u64,
+    ) -> Self {
+        if let Some(err_ms) = last_error_at_ms {
+            let chunk_ms = last_chunk_at_ms.unwrap_or(i64::MIN);
+            if err_ms > chunk_ms {
+                return Self::Error;
+            }
+        }
+        match last_chunk_at_ms {
+            Some(ts) => {
+                // 2× interval, expressed in ms (interval_secs * 2 * 1000).
+                let window_ms = (interval_secs as i64).saturating_mul(2_000);
+                if now_ms.saturating_sub(ts) <= window_ms {
+                    Self::Active
+                } else {
+                    Self::Stale
+                }
+            }
+            None => Self::Stale,
+        }
+    }
+}
+
 /// One row per provider (slack/gmail/discord/notion/…) that has
 /// produced chunks. The provider name is parsed from each chunk's
 /// `source_id` prefix (everything before the first `:`).
@@ -122,5 +171,61 @@ mod tests {
             FreshnessLabel::Idle
         );
         assert_eq!(FreshnessLabel::from_age_ms(None, now), FreshnessLabel::Idle);
+    }
+
+    const TEST_INTERVAL_SECS: u64 = 1200; // 20 min, matches the periodic tick
+
+    #[test]
+    fn health_error_when_error_newer_than_last_chunk() {
+        let now = 1_777_000_000_000;
+        let h = IntegrationHealth::derive(
+            Some(now - 10 * 60_000),
+            Some(now - 60_000),
+            now,
+            TEST_INTERVAL_SECS,
+        );
+        assert_eq!(h, IntegrationHealth::Error);
+    }
+
+    #[test]
+    fn health_active_when_chunk_newer_than_error() {
+        let now = 1_777_000_000_000;
+        let h = IntegrationHealth::derive(
+            Some(now - 60_000),
+            Some(now - 10 * 60_000),
+            now,
+            TEST_INTERVAL_SECS,
+        );
+        assert_eq!(h, IntegrationHealth::Active);
+    }
+
+    #[test]
+    fn health_error_when_error_and_no_chunk() {
+        let now = 1_777_000_000_000;
+        let h = IntegrationHealth::derive(None, Some(now - 60_000), now, TEST_INTERVAL_SECS);
+        assert_eq!(h, IntegrationHealth::Error);
+    }
+
+    #[test]
+    fn health_active_within_two_intervals() {
+        let now = 1_777_000_000_000;
+        let h = IntegrationHealth::derive(Some(now - 39 * 60_000), None, now, TEST_INTERVAL_SECS);
+        assert_eq!(h, IntegrationHealth::Active);
+    }
+
+    #[test]
+    fn health_stale_beyond_two_intervals() {
+        let now = 1_777_000_000_000;
+        let h = IntegrationHealth::derive(Some(now - 41 * 60_000), None, now, TEST_INTERVAL_SECS);
+        assert_eq!(h, IntegrationHealth::Stale);
+    }
+
+    #[test]
+    fn health_stale_when_no_chunk_and_no_error() {
+        let now = 1_777_000_000_000;
+        assert_eq!(
+            IntegrationHealth::derive(None, None, now, TEST_INTERVAL_SECS),
+            IntegrationHealth::Stale
+        );
     }
 }
