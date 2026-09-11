@@ -72,10 +72,7 @@ fn production_resolution_still_honours_the_workspace_env_var() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let _guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", tmp.path());
 
-    assert_eq!(
-        resolve_workspace_dir(None),
-        tmp.path().to_path_buf()
-    );
+    assert_eq!(resolve_workspace_dir(None), tmp.path().to_path_buf());
 }
 
 /// The unscoped default must live outside the developer's home directory, so a
