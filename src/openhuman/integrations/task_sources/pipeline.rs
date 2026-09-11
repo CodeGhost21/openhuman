@@ -122,6 +122,7 @@ fn fetch_tasks_unavailable(
     ))
 }
 
+/// Fetch, process, and reconcile one source pass.
 async fn run_inner(
     config: &Config,
     source: &TaskSource,
@@ -234,6 +235,7 @@ async fn run_inner(
     Ok(())
 }
 
+/// Reconcile only when the fetched page is known not to be capped.
 async fn reconcile_if_complete(
     config: &Config,
     source: &TaskSource,
