@@ -634,42 +634,33 @@ impl AuthProfilesStore {
 
         let mut new_persisted_profiles: BTreeMap<String, PersistedAuthProfile> = BTreeMap::new();
         let mut new_profiles: BTreeMap<String, AuthProfile> = BTreeMap::new();
+        let mut profile_id_migration_targets: BTreeMap<String, String> = BTreeMap::new();
         let mut profile_casing_changed_count: usize = 0;
         let mut profile_migration_conflicts: usize = 0;
 
         let mut profile_entries: Vec<_> = std::mem::take(&mut persisted.profiles)
             .into_iter()
             .collect();
-        // Canonical profile IDs must win before any case-variant IDs are
-        // considered, independently of map iteration order.
-        profile_entries.sort_by_key(|(id, _)| id.to_ascii_lowercase() != *id);
+        // Canonical provider IDs must win before any provider-case variants
+        // are considered, independently of map iteration order. The profile
+        // name is intentionally excluded from this comparison: names are
+        // user-facing and case-sensitive.
+        profile_entries.sort_by_key(|(id, p)| {
+            id != &profile_id(&p.provider.to_ascii_lowercase(), &p.profile_name)
+        });
         for (id, mut p) in profile_entries {
-            let lower_id = id.to_ascii_lowercase();
             let lower_provider = p.provider.to_ascii_lowercase();
-            if lower_id != id || lower_provider != p.provider {
-                key_migrated = true;
-                profile_casing_changed_count += 1;
-                p.provider = lower_provider.clone();
-            }
+            let normalized_id = profile_id(&lower_provider, &p.profile_name);
+            let provider_or_id_changed = normalized_id != id || lower_provider != p.provider;
 
             if let Some(mut ap) = profiles.remove(&id) {
-                ap.id = lower_id.clone();
-                ap.provider = lower_provider;
-
-                if self.use_keychain
-                    && lower_id != id
-                    && (ap.token.is_some() || ap.token_set.is_some())
-                {
-                    let _ = self.keychain_store_secrets(&ap);
-                    self.keychain_delete_secrets(&id);
-                    keychain_migrated = true;
-                }
-
-                if new_profiles.contains_key(&lower_id) {
+                if new_profiles.contains_key(&normalized_id) {
                     profile_migration_conflicts += 1;
-                    if id == lower_id {
-                        let old = new_profiles.insert(lower_id.clone(), ap);
-                        new_persisted_profiles.insert(lower_id.clone(), p);
+                    if id == normalized_id {
+                        let old = new_profiles.insert(normalized_id.clone(), ap);
+                        new_persisted_profiles.insert(normalized_id.clone(), p);
+                        profile_id_migration_targets
+                            .insert(normalized_id.to_ascii_lowercase(), normalized_id.clone());
                         log::debug!(
                             "[auth] profile id migration collision: dropped mixed-case profile_id={:?}",
                             old.map(|o| o.id)
@@ -680,8 +671,59 @@ impl AuthProfilesStore {
                         );
                     }
                 } else {
-                    new_profiles.insert(lower_id.clone(), ap);
-                    new_persisted_profiles.insert(lower_id, p);
+                    ap.id = normalized_id.clone();
+                    ap.provider = lower_provider.clone();
+                    p.provider = lower_provider;
+
+                    // Resolve the collision above before moving any secret.
+                    // If the replacement write fails, retain the old ID and
+                    // persisted representation so the old keychain entry
+                    // remains reachable on the next load.
+                    let migration_succeeded = if self.use_keychain
+                        && provider_or_id_changed
+                        && (ap.token.is_some() || ap.token_set.is_some())
+                    {
+                        match self.keychain_store_secrets(&ap) {
+                            Ok(()) => {
+                                self.keychain_delete_secrets(&id);
+                                keychain_migrated = true;
+                                true
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[auth] load: keychain profile-id migration failed old_profile_id={id}: {e}; retaining legacy entry"
+                                );
+                                false
+                            }
+                        }
+                    } else {
+                        true
+                    };
+
+                    let final_id = if migration_succeeded {
+                        if provider_or_id_changed {
+                            key_migrated = true;
+                            profile_casing_changed_count += 1;
+                        }
+                        normalized_id
+                    } else {
+                        ap.id = id.clone();
+                        p.provider = p.provider.clone();
+                        id.clone()
+                    };
+                    profile_id_migration_targets
+                        .insert(normalized_id.to_ascii_lowercase(), final_id.clone());
+                    new_profiles.insert(final_id.clone(), ap);
+                    new_persisted_profiles.insert(final_id, p);
+                }
+            }
+        }
+        for profile_id in persisted.active_profiles.values_mut() {
+            let normalized = profile_id.to_ascii_lowercase();
+            if let Some(target) = profile_id_migration_targets.get(&normalized) {
+                if profile_id != target {
+                    *profile_id = target.clone();
+                    key_migrated = true;
                 }
             }
         }
