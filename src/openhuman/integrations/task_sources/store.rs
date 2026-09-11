@@ -514,7 +514,7 @@ const TASK_SOURCES_SCHEMA_VERSION: i64 = 1;
 /// whose on-disk version no longer matches was initialized by *this* process and
 /// has since been deleted or replaced, which is worth a warning; a path absent
 /// from the set is an ordinary first-ever init and stays silent.
-fn ensure_schema_initialized(conn: &Connection, db_path: &Path) -> Result<()> {
+fn ensure_schema_initialized(conn: &mut Connection, db_path: &Path) -> Result<()> {
     let is_current = || -> bool {
         let version = conn
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
