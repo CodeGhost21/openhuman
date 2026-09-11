@@ -591,7 +591,6 @@ impl AuthProfilesStore {
         let mut new_active = BTreeMap::new();
         let mut active_entries: Vec<_> = persisted.active_profiles.iter().collect();
         active_entries.sort_by_key(|(k, _)| k.to_ascii_lowercase() != **k);
-        let mut active_migration_conflicts = 0;
         for (k, v) in active_entries {
             let lower = k.to_ascii_lowercase();
             let normalized_value = normalize_profile_id_provider(v);
@@ -599,25 +598,12 @@ impl AuthProfilesStore {
                 key_migrated = true;
             }
             if new_active.contains_key(&lower) {
-                active_migration_conflicts += 1;
                 if k == &lower {
                     new_active.insert(lower.clone(), normalized_value.clone());
-                    log::debug!(
-                        "[auth] active-profile key migration collision: canonical key={k} replaced a non-canonical entry"
-                    );
-                } else {
-                    log::debug!(
-                        "[auth] active-profile key migration collision: dropped mixed-case entry for key={k}"
-                    );
                 }
             } else {
                 new_active.insert(lower, normalized_value);
             }
-        }
-        if active_migration_conflicts > 0 {
-            log::warn!(
-                "[auth] active-profile migration: {active_migration_conflicts} case-variant collision(s) resolved by preferring the canonical lowercase key"
-            );
         }
         if key_migrated {
             persisted.active_profiles = new_active;
