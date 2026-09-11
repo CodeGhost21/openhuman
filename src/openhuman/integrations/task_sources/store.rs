@@ -653,7 +653,7 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
             )
         })?;
     }
-    let conn = Connection::open(&db_path)
+    let mut conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open task_sources DB: {}", db_path.display()))?;
     // Open-time pragmas, reapplied on every open regardless of the schema-init
     // cache below (they configure the connection, not the schema). Overlapping
