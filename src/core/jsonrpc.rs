@@ -1995,7 +1995,7 @@ fn learning_first_time() -> bool {
     static DONE: std::sync::OnceLock<std::sync::Mutex<bool>> = std::sync::OnceLock::new();
     learning_first_time_when_bus_ready(
         DONE.get_or_init(|| std::sync::Mutex::new(false)),
-        crate::core::event_bus::global().is_some(),
+        crate::core::bus::BUS.get().is_some(),
     )
 }
 
