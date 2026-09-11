@@ -205,7 +205,7 @@ prioritization.
    Speech-to-text is a hosted call now, with the engine chosen by
    `voice_server.stt_engine` (see the AGENTS.md scope note). The `inference`
    feature survives with a narrower job: it gates `cpal` alone, which is what a
-   headless library host wanted shed anyway.
+   headless library host wanted to shed anyway.
 
 2. **Split `rhai` out of the `flows` gate.** `flows` is the most expensive domain
    we *keep* (+12.7 MiB, dominated by `rhai 1.25` — a full scripting engine).
