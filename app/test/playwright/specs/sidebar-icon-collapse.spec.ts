@@ -204,7 +204,9 @@ test.describe('Sidebar icon-collapse verification (#5676)', () => {
     await expect(page.locator(REOPEN)).toBeVisible();
 
     const sidebarBox = await page.locator(SIDEBAR).boundingBox();
-    const strip = page.locator(`${SIDEBAR} [data-tauri-drag-region]`).first();
+    // The drag marker is on the full-height collapsed body; its first direct
+    // child is the fixed 28px spacer above the rail items.
+    const strip = page.locator(`${SIDEBAR} [data-tauri-drag-region="deep"] > div`).first();
     const stripBox = await strip.boundingBox();
     if (!sidebarBox || !stripBox) throw new Error('collapsed rail geometry missing');
 
@@ -248,7 +250,9 @@ test.describe('Sidebar icon-collapse verification (#5676)', () => {
 
       // Hover: resolved background settles exactly on --line-chrome. The
       // indicator carries `transition-colors`, so poll rather than race it.
-      await rail.hover();
+      // The rail is intentionally zero-width; its widened first span is the
+      // real pointer hit area. The final span remains the painted seam.
+      await rail.locator('span').first().hover();
       await expect
         .poll(async () => indicator.evaluate(el => getComputedStyle(el).backgroundColor))
         .toBe(chromeRgb);
