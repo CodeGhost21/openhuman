@@ -649,6 +649,7 @@ impl AuthProfilesStore {
             id != &profile_id(&p.provider.to_ascii_lowercase(), &p.profile_name)
         });
         for (id, mut p) in profile_entries {
+            let original_provider = p.provider.clone();
             let lower_provider = p.provider.to_ascii_lowercase();
             let normalized_id = profile_id(&lower_provider, &p.profile_name);
             let provider_or_id_changed = normalized_id != id || lower_provider != p.provider;
@@ -705,10 +706,10 @@ impl AuthProfilesStore {
                             key_migrated = true;
                             profile_casing_changed_count += 1;
                         }
-                        normalized_id
+                        normalized_id.clone()
                     } else {
                         ap.id = id.clone();
-                        p.provider = p.provider.clone();
+                        p.provider = original_provider;
                         id.clone()
                     };
                     profile_id_migration_targets
