@@ -574,7 +574,7 @@ fn ensure_schema_initialized(conn: &mut Connection, db_path: &Path) -> Result<()
 /// completed initialization between the caller's lock-free check and the
 /// `BEGIN IMMEDIATE`, we bail early. This prevents stamping a stale version
 /// on a database a concurrent process already migrated (CodeRabbit #5709).
-fn init_schema(conn: &Connection) -> Result<()> {
+fn init_schema(conn: &mut Connection) -> Result<()> {
     // Immediate transaction: blocks other writers (and readers in WAL mode
     // with IMMEDIATE) so no two processes can migrate the same database
     // concurrently. `BEGIN IMMEDIATE` succeeds even in WAL mode.
