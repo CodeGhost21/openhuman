@@ -571,13 +571,7 @@ impl AuthProfilesStore {
             );
         }
 
-        // Purge dropped profiles from the on-disk persisted view AND
-        // any `active_profiles` pointers that referenced them, so the
-        // next read returns a clean "no active session" state.
         if !dropped_ids.is_empty() {
-            // Always apply the cleanup to the in-memory view so the returned
-            // data is correct even on the lock-free read path; the on-disk
-            // rewrite below is what's gated by `persist`.
             for id in &dropped_ids {
                 persisted.profiles.remove(id);
             }
@@ -596,8 +590,6 @@ impl AuthProfilesStore {
         let mut key_migrated = false;
         let mut new_active = BTreeMap::new();
         let mut active_entries: Vec<_> = persisted.active_profiles.iter().collect();
-        // Process canonical keys first so collision handling never depends on
-        // BTreeMap's ordering of ASCII upper- and lowercase bytes.
         active_entries.sort_by_key(|(k, _)| k.to_ascii_lowercase() != **k);
         let mut active_migration_conflicts = 0;
         for (k, v) in active_entries {
@@ -607,8 +599,6 @@ impl AuthProfilesStore {
             }
             if new_active.contains_key(&lower) {
                 active_migration_conflicts += 1;
-                // If this is the canonical lowercase key, it supersedes any non-canonical
-                // variant seen earlier in iteration order.
                 if k == &lower {
                     new_active.insert(lower.clone(), v.clone());
                     log::debug!(
@@ -641,10 +631,6 @@ impl AuthProfilesStore {
         let mut profile_entries: Vec<_> = std::mem::take(&mut persisted.profiles)
             .into_iter()
             .collect();
-        // Canonical provider IDs must win before any provider-case variants
-        // are considered, independently of map iteration order. The profile
-        // name is intentionally excluded from this comparison: names are
-        // user-facing and case-sensitive.
         profile_entries.sort_by_key(|(id, p)| {
             id != &profile_id(&p.provider.to_ascii_lowercase(), &p.profile_name)
         });
@@ -687,10 +673,6 @@ impl AuthProfilesStore {
                     ap.provider = lower_provider.clone();
                     p.provider = lower_provider;
 
-                    // Resolve the collision above before moving any secret.
-                    // If the replacement write fails, retain the old ID and
-                    // persisted representation so the old keychain entry
-                    // remains reachable on the next load.
                     let migration_succeeded = if self.use_keychain
                         && provider_or_id_changed
                         && (ap.token.is_some() || ap.token_set.is_some())
@@ -753,11 +735,6 @@ impl AuthProfilesStore {
         persisted.profiles = new_persisted_profiles;
         profiles = new_profiles;
 
-        // Persist opportunistic cleanup / migrations only on the locked write
-        // path. The lock-free read-only fallback (`persist = false`, used when
-        // the disk can't accept the lock file) intentionally skips this — the
-        // write would fail on a full disk anyway, and the in-memory view above
-        // is already correct.
         if persist && (!dropped_ids.is_empty() || migrated || keychain_migrated || key_migrated) {
             self.write_persisted_locked(&persisted)?;
             for id in pending_keychain_deletes {
