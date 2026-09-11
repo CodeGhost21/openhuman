@@ -14,8 +14,6 @@ const LEGACY_LIMITS = new Map([
   ["src/openhuman/agent/harness/subagent_runner/ops/runner.rs", 1769],
   ["src/openhuman/tools/ops.rs", 1502],
   ["src/openhuman/web_chat/progress_bridge.rs", 1547],
-  // Split from a larger file in 1acfbd7581; 26 lines over the 750 limit.
-  ["src/openhuman/agent/tinyagents/middleware_part_02.rs", 776],
 ]);
 
 function rustFiles(directory) {
