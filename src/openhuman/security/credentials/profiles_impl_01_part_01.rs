@@ -594,20 +594,25 @@ impl AuthProfilesStore {
 
         let mut key_migrated = false;
         let mut new_active = BTreeMap::new();
-        for (k, v) in &persisted.active_profiles {
+        let mut active_entries: Vec<_> = persisted.active_profiles.iter().collect();
+        // Process canonical keys first so collision handling never depends on
+        // BTreeMap's ordering of ASCII upper- and lowercase bytes.
+        active_entries.sort_by_key(|(k, _)| k.to_ascii_lowercase() != **k);
+        let mut active_migration_conflicts = 0;
+        for (k, v) in active_entries {
             let lower = k.to_ascii_lowercase();
             let lower_val = v.to_ascii_lowercase();
             if &lower != k || &lower_val != v {
                 key_migrated = true;
             }
             if new_active.contains_key(&lower) {
+                active_migration_conflicts += 1;
                 // If this is the canonical lowercase key, it supersedes any non-canonical
                 // variant seen earlier in iteration order.
                 if k == &lower {
-                    let old_val = new_active.insert(lower.clone(), lower_val.clone());
+                    new_active.insert(lower.clone(), lower_val.clone());
                     log::debug!(
-                        "[auth] active-profile key migration collision: dropped mixed-case entry for key={k} target_profile_id={:?}",
-                        old_val
+                        "[auth] active-profile key migration collision: canonical key={k} replaced a non-canonical entry"
                     );
                 } else {
                     log::debug!(
@@ -618,6 +623,11 @@ impl AuthProfilesStore {
                 new_active.insert(lower, lower_val);
             }
         }
+        if active_migration_conflicts > 0 {
+            log::warn!(
+                "[auth] active-profile migration: {active_migration_conflicts} case-variant collision(s) resolved by preferring the canonical lowercase key"
+            );
+        }
         if key_migrated {
             persisted.active_profiles = new_active;
         }
@@ -627,7 +637,13 @@ impl AuthProfilesStore {
         let mut profile_casing_changed_count: usize = 0;
         let mut profile_migration_conflicts: usize = 0;
 
-        for (id, mut p) in std::mem::take(&mut persisted.profiles) {
+        let mut profile_entries: Vec<_> = std::mem::take(&mut persisted.profiles)
+            .into_iter()
+            .collect();
+        // Canonical profile IDs must win before any case-variant IDs are
+        // considered, independently of map iteration order.
+        profile_entries.sort_by_key(|(id, _)| id.to_ascii_lowercase() != *id);
+        for (id, mut p) in profile_entries {
             let lower_id = id.to_ascii_lowercase();
             let lower_provider = p.provider.to_ascii_lowercase();
             if lower_id != id || lower_provider != p.provider {

@@ -158,7 +158,7 @@ pub fn select_profile_id(
     };
 
     if let Some(override_profile) = profile_override {
-        let requested = resolve_requested_profile_id(provider, override_profile);
+        let requested = resolve_requested_profile_id(&normalized, override_profile);
         if data.profiles.contains_key(&requested) {
             return Some(requested);
         }
@@ -181,7 +181,7 @@ pub fn select_profile_id(
         }
     }
 
-    let default = default_profile_id(provider);
+    let default = default_profile_id(&normalized);
     if data.profiles.contains_key(&default) {
         return Some(default);
     }
@@ -191,7 +191,9 @@ pub fn select_profile_id(
     }
 
     data.profiles.iter().find_map(|(id, profile)| {
-        (profile.provider == normalized || profile.provider == provider_key).then(|| id.clone())
+        (profile.provider.eq_ignore_ascii_case(&normalized)
+            || profile.provider.eq_ignore_ascii_case(&provider_key))
+        .then(|| id.clone())
     })
 }
 
