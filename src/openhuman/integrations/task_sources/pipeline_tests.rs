@@ -2,8 +2,9 @@ use super::*;
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::task_sources::store;
 use crate::openhuman::integrations::task_sources::types::{
-    FilterSpec, NormalizedTask, ProviderSlug, SourceTarget,
+    FilterSpec, ProviderSlug, SourceTarget,
 };
+use crate::openhuman::integrations::task_sources::NormalizedTask;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -140,7 +141,9 @@ async fn full_page_fetch_skips_prune_then_resumes_below_cap() {
         1,
         "a below-cap fetch resumes reconciliation and prunes the stale task"
     );
-    assert!(store::list_ingested_refs(&config, &source.id).unwrap().is_empty());
+    assert!(store::list_ingested_refs(&config, &source.id)
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
