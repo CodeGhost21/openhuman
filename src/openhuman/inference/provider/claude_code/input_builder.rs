@@ -118,7 +118,9 @@ fn image_block(reference: &str) -> Option<Value> {
             .split(';')
             .any(|flag| flag.eq_ignore_ascii_case("base64"))
         {
-            let bytes = base64::engine::general_purpose::STANDARD.decode(payload).ok()?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(payload)
+                .ok()?;
             (bytes, payload.to_string())
         } else {
             let bytes = percent_decode_bytes(payload)?;
@@ -162,8 +164,12 @@ fn percent_decode_bytes(input: &str) -> Option<Vec<u8>> {
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] == b'%' {
-            let high = bytes.get(index + 1).and_then(|b| (*b as char).to_digit(16))?;
-            let low = bytes.get(index + 2).and_then(|b| (*b as char).to_digit(16))?;
+            let high = bytes
+                .get(index + 1)
+                .and_then(|b| (*b as char).to_digit(16))?;
+            let low = bytes
+                .get(index + 2)
+                .and_then(|b| (*b as char).to_digit(16))?;
             decoded.push((high * 16 + low) as u8);
             index += 3;
         } else {
