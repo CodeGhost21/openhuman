@@ -594,13 +594,14 @@ impl AuthProfilesStore {
         let mut active_migration_conflicts = 0;
         for (k, v) in active_entries {
             let lower = k.to_ascii_lowercase();
-            if &lower != k {
+            let normalized_value = normalize_profile_id_provider(v);
+            if &lower != k || &normalized_value != v {
                 key_migrated = true;
             }
             if new_active.contains_key(&lower) {
                 active_migration_conflicts += 1;
                 if k == &lower {
-                    new_active.insert(lower.clone(), v.clone());
+                    new_active.insert(lower.clone(), normalized_value.clone());
                     log::debug!(
                         "[auth] active-profile key migration collision: canonical key={k} replaced a non-canonical entry"
                     );
@@ -610,7 +611,7 @@ impl AuthProfilesStore {
                     );
                 }
             } else {
-                new_active.insert(lower, v.clone());
+                new_active.insert(lower, normalized_value);
             }
         }
         if active_migration_conflicts > 0 {
@@ -651,6 +652,10 @@ impl AuthProfilesStore {
                         new_persisted_profiles.insert(normalized_id.clone(), p);
                         profile_id_migration_targets
                             .insert(id.clone(), normalized_id.clone());
+                        profile_id_migration_targets.insert(
+                            normalize_profile_id_provider(&id),
+                            normalized_id.clone(),
+                        );
                         if self.use_keychain {
                             if let Some(old_id) = &old_id {
                                 pending_keychain_deletes.push(old_id.clone());
@@ -707,13 +712,15 @@ impl AuthProfilesStore {
                     };
                     profile_id_migration_targets
                         .insert(id.clone(), final_id.clone());
+                    profile_id_migration_targets
+                        .insert(normalize_profile_id_provider(&id), final_id.clone());
                     new_profiles.insert(final_id.clone(), ap);
                     new_persisted_profiles.insert(final_id, p);
                 }
             }
         }
         for profile_id in persisted.active_profiles.values_mut() {
-            let normalized = profile_id.to_ascii_lowercase();
+            let normalized = normalize_profile_id_provider(profile_id);
             if let Some(target) = profile_id_migration_targets.get(&normalized) {
                 if profile_id != target {
                     *profile_id = target.clone();
