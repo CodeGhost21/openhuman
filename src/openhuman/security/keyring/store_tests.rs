@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 
 use super::test_scope::ScopedWorkspace;
-use super::{resolve_workspace_dir_from_process_state, workspace_dir_for_file_backend};
+use super::{resolve_workspace_dir, workspace_dir_for_file_backend};
 use crate::openhuman::config::TEST_ENV_LOCK;
 use crate::openhuman::security::keyring;
 
@@ -73,7 +73,7 @@ fn production_resolution_still_honours_the_workspace_env_var() {
     let _guard = EnvVarGuard::set("OPENHUMAN_WORKSPACE", tmp.path());
 
     assert_eq!(
-        resolve_workspace_dir_from_process_state(),
+        resolve_workspace_dir(None),
         tmp.path().to_path_buf()
     );
 }
