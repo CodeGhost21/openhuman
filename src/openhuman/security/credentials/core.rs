@@ -71,6 +71,11 @@ impl AuthService {
         Ok(profile_id)
     }
 
+    /// Removes the requested profile, trying the bare key before its
+    /// `provider:`-namespaced legacy equivalent.
+    ///
+    /// The bare key wins when both forms exist; the namespaced key is only a
+    /// fallback for profiles written by older callers.
     pub fn remove_profile(&self, provider: &str, requested_profile: &str) -> Result<bool> {
         let provider = normalize_provider(provider)?;
         let profile_id = resolve_requested_profile_id(&provider, requested_profile);
