@@ -233,6 +233,6 @@ prioritization.
 
 - [`docs/library-benchmarking.md`](library-benchmarking.md) — the benchmark
   environment, scenario definitions, and default/slim baselines.
-- [`docs/resource-profiling-session-2026-07-21.md`](resource-profiling-session-2026-07-21.md)
+- `docs/resource-profiling-session-2026-07-21.md`
   — deep memory/CPU attribution (why RSS is mostly not live heap).
 - AGENTS.md "Compile-time domain gates" — the per-gate behavior and dependency notes.
