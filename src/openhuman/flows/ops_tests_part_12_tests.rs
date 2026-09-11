@@ -684,7 +684,7 @@ async fn boot_sweep_handles_schema_init_failure_gracefully() {
         "the sweep warning must preserve the schema context, got {warning:?}"
     );
     assert!(
-        warning.contains("disk permission denied"),
-        "the sweep warning must preserve the root cause, got {warning:?}"
+        warning.contains(&file_path.join("flows").display().to_string()),
+        "the sweep warning must preserve the filesystem root cause, got {warning:?}"
     );
 }
