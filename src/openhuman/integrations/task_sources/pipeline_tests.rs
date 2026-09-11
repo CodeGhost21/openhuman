@@ -1,9 +1,7 @@
 use super::*;
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::task_sources::store;
-use crate::openhuman::integrations::task_sources::types::{
-    FilterSpec, ProviderSlug, SourceTarget,
-};
+use crate::openhuman::integrations::task_sources::types::{FilterSpec, ProviderSlug, SourceTarget};
 use crate::openhuman::integrations::task_sources::NormalizedTask;
 use serde_json::json;
 use tempfile::TempDir;
