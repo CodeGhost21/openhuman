@@ -72,6 +72,14 @@ const THEME_COMBOS: ThemeCombo[] = [
   { name: 'hal9000-dark', familyId: 'hal9000', variant: 'dark' },
 ];
 
+const EXPECTED_CANVAS_BY_THEME: Record<string, string> = {
+  'classic-light': '245 245 245',
+  'classic-dark': '0 0 0',
+  'ocean-dark': '7 12 24',
+  'matrix-light': '234 245 237',
+  'hal9000-dark': '8 4 4',
+};
+
 function tripleToRgb(triple: string): string {
   const [r, g, b] = triple.trim().split(/\s+/).map(Number);
   return `rgb(${r}, ${g}, ${b})`;
@@ -220,6 +228,12 @@ test.describe('Sidebar icon-collapse verification (#5676)', () => {
       expect(isDark).toBe(combo.variant === 'dark');
       await expect(page.locator(SIDEBAR)).toHaveAttribute('data-state', 'expanded');
 
+      // Verify the persisted family, not only its light/dark variant. Each
+      // selected family has a distinct canvas token in this coverage set.
+      expect(await tokenTriple(page, '--surface-canvas')).toBe(
+        EXPECTED_CANVAS_BY_THEME[combo.name]
+      );
+
       const chromeRgb = tripleToRgb(await tokenTriple(page, '--line-chrome'));
       const plainLineRgb = tripleToRgb(await tokenTriple(page, '--line'));
       // The two tokens must actually differ, or this assertion proves nothing.
@@ -240,7 +254,12 @@ test.describe('Sidebar icon-collapse verification (#5676)', () => {
         .toBe(chromeRgb);
 
       // Focus: same verdict through the group-focus variant.
+      await page.mouse.move(1, 1);
+      await expect
+        .poll(async () => indicator.evaluate(el => getComputedStyle(el).backgroundColor))
+        .toBe('rgba(0, 0, 0, 0)');
       await rail.focus();
+      await expect(rail).toBeFocused();
       await expect
         .poll(async () => indicator.evaluate(el => getComputedStyle(el).backgroundColor))
         .toBe(chromeRgb);

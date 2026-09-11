@@ -34,7 +34,7 @@ need to re-derive them (it should still notice anything odd):
 Run the automated layer with:
 
 ```bash
-pnpm test:e2e:web -- test/playwright/specs/sidebar-icon-collapse.spec.ts
+pnpm --filter openhuman-app test:e2e:web -- test/playwright/specs/sidebar-icon-collapse.spec.ts
 # or against an existing build:
 bash app/scripts/e2e-web-session.sh test/playwright/specs/sidebar-icon-collapse.spec.ts
 ```
@@ -66,7 +66,7 @@ Set `PW_SIDEBAR_SHOTS=1` to also drop evidence screenshots into
 - [ ] **Traffic lights stay clear while collapsed** — With the sidebar
       collapsed, the macOS window controls must sit on bare draggable chrome,
       fully visible and clickable, not overlapping the first rail icon. Click
-      each traffic light (close last). Expected: every click lands on the
+      the minimise and maximise traffic lights. Expected: every click lands on the
       control, none gets swallowed by a rail button; dragging the window by the
       strip above the icons moves the window.
 - [ ] **Traffic lights stay clear while expanded** — Same check with the
@@ -84,6 +84,8 @@ Set `PW_SIDEBAR_SHOTS=1` to also drop evidence screenshots into
       press Left/Right; expected: 16px steps. Quit the app entirely (mod+Q) and
       relaunch. Expected: the sidebar reopens at the dragged width. Also
       collapse, quit, relaunch: expected: still collapsed.
+      After all other macOS checks are complete, click the close traffic light
+      to confirm it exits cleanly.
 
 ### Windows (recommended)
 
