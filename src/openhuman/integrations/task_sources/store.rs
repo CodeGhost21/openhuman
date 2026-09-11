@@ -480,11 +480,14 @@ const TASK_SOURCES_SCHEMA_VERSION: i64 = 1;
 ///
 /// **The on-disk `PRAGMA user_version` is the authority, and the fast path is
 /// lock-free.** [`init_schema`] stamps [`TASK_SOURCES_SCHEMA_VERSION`] only after
-/// a full, successful migration, so a connection whose `user_version` already
-/// matches is known-good and returns without touching any process-global state —
-/// the common case (an already-initialized store) never acquires the
-/// initialization mutex. Reading `user_version` is a single database-header read,
-/// far cheaper than the DDL batch + metadata scans it replaces.
+/// a full, successful migration, so a connection whose `user_version >=
+/// TASK_SOURCES_SCHEMA_VERSION` is known-good and returns without touching any
+/// process-global state — the common case (an already-initialized store) never
+/// acquires the initialization mutex. Reading `user_version` is a single
+/// database-header read, far cheaper than the DDL batch + metadata scans it
+/// replaces. Treating newer on-disk versions as already-initialized avoids
+/// needlessly downgrading the stamp on a database created by a newer binary
+/// (mirroring `security/approval/store.rs`'s idiom).
 ///
 /// **Initialization is serialized and atomic per process.** Only a version
 /// *mismatch* takes the [`INITIALIZED_SCHEMAS`] lock, and `user_version` is
@@ -496,12 +499,15 @@ const TASK_SOURCES_SCHEMA_VERSION: i64 = 1;
 /// **Trust, but verify.** Before this gating existed the DDL ran on every
 /// `with_connection` call, so a database deleted or replaced at runtime (a
 /// workspace reset, a manual deletion, a disk-recovery restore) self-healed on
-/// the next call. The version gate restores that: a stale/zero `user_version` —
-/// a fresh file, or an older/partial schema swapped in under a live process
-/// (missing `ingested_tasks` or a migrated column such as
-/// `card_id`/`assigned_executor`) — falls through to the idempotent
-/// [`init_schema`] and is re-migrated rather than trusted and later failing on
-/// the incomplete schema (CodeRabbit / Codex review on #5709).
+/// the next call. The version gate restores that: a `user_version` lower than
+/// the expected version — 0 for a fresh file, or an older/partial schema
+/// swapped in under a live process (missing `ingested_tasks` or a migrated
+/// column such as `card_id`/`assigned_executor`) — falls through to the
+/// idempotent [`init_schema`] and is re-migrated rather than trusted and later
+/// failing on the incomplete schema (CodeRabbit / Codex review on #5709). An
+/// on-disk version *higher* than expected is treated as already-initialized
+/// (forward-compatible: an older binary opening a newer database does not
+/// downgrade the stamp).
 ///
 /// [`INITIALIZED_SCHEMAS`] no longer gates the DDL — the on-disk version does —
 /// and is kept purely as a **diagnostic marker**: a path present in the set
@@ -510,9 +516,14 @@ const TASK_SOURCES_SCHEMA_VERSION: i64 = 1;
 /// from the set is an ordinary first-ever init and stays silent.
 fn ensure_schema_initialized(conn: &Connection, db_path: &Path) -> Result<()> {
     let is_current = || -> bool {
-        conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .unwrap_or(0)
-            == TASK_SOURCES_SCHEMA_VERSION
+        let version = conn
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap_or(0);
+        // Treat any on-disk version >= expected as already initialized.
+        // This avoids downgrading the stamp when an older binary opens a
+        // database created by a newer version (the repo's own idiom,
+        // mirroring `security/approval/store.rs`).
+        version >= TASK_SOURCES_SCHEMA_VERSION
     };
 
     // Lock-free fast path: an already-migrated database carries
