@@ -522,6 +522,36 @@ async fn load_migrates_un_lowercased_active_profiles_keys_and_providers() {
 }
 
 #[test]
+fn migration_normalizes_provider_but_preserves_profile_name_casing() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let raw_json = serde_json::json!({
+        "schema_version": 1,
+        "updated_at": "2026-08-07T10:00:00Z",
+        "active_profiles": {
+            "provider:DeepSeek": "provider:DeepSeek:Work"
+        },
+        "profiles": {
+            "provider:DeepSeek:Work": {
+                "provider": "provider:DeepSeek",
+                "profile_name": "Work",
+                "kind": "token",
+                "token": "sk-test-secret",
+                "created_at": "2026-08-07T10:00:00Z",
+                "updated_at": "2026-08-07T10:00:00Z"
+            }
+        }
+    });
+    std::fs::write(store.path(), serde_json::to_vec_pretty(&raw_json).unwrap()).unwrap();
+
+    let data = store.load().unwrap();
+    let profile = data.profiles.get("provider:deepseek:Work").unwrap();
+    assert_eq!(profile.id, "provider:deepseek:Work");
+    assert_eq!(profile.provider, "provider:deepseek");
+    assert_eq!(data.active_profiles.get("provider:deepseek"), Some(&profile.id));
+}
+
+#[test]
 fn migration_collision_prefers_existing_lowercase_key() {
     let tmp = TempDir::new().unwrap();
     let store = AuthProfilesStore::new(tmp.path(), false);
