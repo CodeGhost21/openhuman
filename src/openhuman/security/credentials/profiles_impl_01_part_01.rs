@@ -274,6 +274,7 @@ impl AuthProfilesStore {
         // `keychain_migrated` tracks enc2: → keychain promotions: when true the
         // persisted JSON must be rewritten with secret fields cleared.
         let mut keychain_migrated = false;
+        let mut pending_keychain_deletes = Vec::new();
         let mut dropped_ids: Vec<String> = Vec::new();
 
         let mut profiles = BTreeMap::new();
@@ -601,8 +602,7 @@ impl AuthProfilesStore {
         let mut active_migration_conflicts = 0;
         for (k, v) in active_entries {
             let lower = k.to_ascii_lowercase();
-            let lower_val = v.to_ascii_lowercase();
-            if &lower != k || &lower_val != v {
+            if &lower != k {
                 key_migrated = true;
             }
             if new_active.contains_key(&lower) {
@@ -610,17 +610,17 @@ impl AuthProfilesStore {
                 // If this is the canonical lowercase key, it supersedes any non-canonical
                 // variant seen earlier in iteration order.
                 if k == &lower {
-                    new_active.insert(lower.clone(), lower_val.clone());
+                    new_active.insert(lower.clone(), v.clone());
                     log::debug!(
                         "[auth] active-profile key migration collision: canonical key={k} replaced a non-canonical entry"
                     );
                 } else {
                     log::debug!(
-                        "[auth] active-profile key migration collision: dropped mixed-case entry for key={k} target_profile_id={lower_val}"
+                        "[auth] active-profile key migration collision: dropped mixed-case entry for key={k}"
                     );
                 }
             } else {
-                new_active.insert(lower, lower_val);
+                new_active.insert(lower, v.clone());
             }
         }
         if active_migration_conflicts > 0 {
@@ -657,16 +657,27 @@ impl AuthProfilesStore {
             if let Some(mut ap) = profiles.remove(&id) {
                 if new_profiles.contains_key(&normalized_id) {
                     profile_migration_conflicts += 1;
+                    key_migrated = true;
                     if id == normalized_id {
-                        let old = new_profiles.insert(normalized_id.clone(), ap);
+                        let old_id = new_profiles
+                            .insert(normalized_id.clone(), ap)
+                            .map(|old| old.id);
                         new_persisted_profiles.insert(normalized_id.clone(), p);
                         profile_id_migration_targets
-                            .insert(normalized_id.to_ascii_lowercase(), normalized_id.clone());
+                            .insert(id.clone(), normalized_id.clone());
+                        if self.use_keychain {
+                            if let Some(old_id) = &old_id {
+                                pending_keychain_deletes.push(old_id.clone());
+                            }
+                        }
                         log::debug!(
                             "[auth] profile id migration collision: dropped mixed-case profile_id={:?}",
-                            old.map(|o| o.id)
+                            old_id
                         );
                     } else {
+                        if self.use_keychain {
+                            pending_keychain_deletes.push(id.clone());
+                        }
                         log::debug!(
                             "[auth] profile id migration collision: dropped mixed-case profile_id={id}"
                         );
@@ -686,8 +697,8 @@ impl AuthProfilesStore {
                     {
                         match self.keychain_store_secrets(&ap) {
                             Ok(()) => {
-                                self.keychain_delete_secrets(&id);
                                 keychain_migrated = true;
+                                pending_keychain_deletes.push(id.clone());
                                 true
                             }
                             Err(e) => {
@@ -713,7 +724,7 @@ impl AuthProfilesStore {
                         id.clone()
                     };
                     profile_id_migration_targets
-                        .insert(normalized_id.to_ascii_lowercase(), final_id.clone());
+                        .insert(id.clone(), final_id.clone());
                     new_profiles.insert(final_id.clone(), ap);
                     new_persisted_profiles.insert(final_id, p);
                 }
@@ -749,6 +760,9 @@ impl AuthProfilesStore {
         // is already correct.
         if persist && (!dropped_ids.is_empty() || migrated || keychain_migrated || key_migrated) {
             self.write_persisted_locked(&persisted)?;
+            for id in pending_keychain_deletes {
+                self.keychain_delete_secrets(&id);
+            }
         }
 
         Ok(AuthProfilesData {
