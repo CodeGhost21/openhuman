@@ -567,8 +567,34 @@ fn ensure_schema_initialized(conn: &Connection, db_path: &Path) -> Result<()> {
 /// carry the open-time pragmas (`busy_timeout`, `journal_mode = WAL`,
 /// `foreign_keys = ON`): those are (re)applied on every open in
 /// `with_connection`, outside this gate.
+///
+/// **Wrapped in an immediate transaction** so the schema version stamp is
+/// atomic with the DDL. The transaction is begun *before* the DDL runs, and
+/// `user_version` is re-read under it — if another process has already
+/// completed initialization between the caller's lock-free check and the
+/// `BEGIN IMMEDIATE`, we bail early. This prevents stamping a stale version
+/// on a database a concurrent process already migrated (CodeRabbit #5709).
 fn init_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
+    // Immediate transaction: blocks other writers (and readers in WAL mode
+    // with IMMEDIATE) so no two processes can migrate the same database
+    // concurrently. `BEGIN IMMEDIATE` succeeds even in WAL mode.
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .context("Failed to begin transaction for task_sources schema init")?;
+
+    // Re-check the version under the transaction — another process may have
+    // completed initialization between the lock-free check in
+    // `ensure_schema_initialized` and this `BEGIN IMMEDIATE`.
+    let current_version: i64 = tx
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap_or(0);
+    if current_version >= TASK_SOURCES_SCHEMA_VERSION {
+        // Another process got there first. Roll back the empty transaction
+        // and return — the schema is already up to date.
+        return Ok(());
+    }
+
+    tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS task_sources (
             id                  TEXT PRIMARY KEY,
             provider            TEXT NOT NULL,
@@ -601,15 +627,18 @@ fn init_schema(conn: &Connection) -> Result<()> {
 
     // Additive migration: add card_id to existing databases that pre-date
     // this column. Tolerate "duplicate column" in case of a concurrent open.
-    add_column_if_missing(conn, "ingested_tasks", "card_id", "TEXT")?;
+    add_column_if_missing(&tx, "ingested_tasks", "card_id", "TEXT")?;
     // G7: static executor routing on a source.
-    add_column_if_missing(conn, "task_sources", "assigned_executor", "TEXT")?;
+    add_column_if_missing(&tx, "task_sources", "assigned_executor", "TEXT")?;
 
     // Stamp the schema version last, so [`ensure_schema_initialized`] only
     // trusts a cache hit whose on-disk schema is fully migrated. Bump
     // TASK_SOURCES_SCHEMA_VERSION whenever a table or migration is added above.
-    conn.pragma_update(None, "user_version", TASK_SOURCES_SCHEMA_VERSION)
+    tx.pragma_update(None, "user_version", TASK_SOURCES_SCHEMA_VERSION)
         .context("Failed to stamp task_sources schema version")?;
+
+    tx.commit()
+        .context("Failed to commit task_sources schema init transaction")?;
 
     Ok(())
 }
