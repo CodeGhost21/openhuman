@@ -144,6 +144,36 @@ fn interleaved_text_and_images_keep_source_order() {
 }
 
 #[test]
+fn percent_encoded_data_uri_emits_an_image_block() {
+    let s = String::from_utf8(build_stdin(
+        &[msg("user", "see [IMAGE:data:image/png,%89PNG%0D%0A]")],
+        true,
+    ))
+    .unwrap();
+    let row: Value = serde_json::from_str(s.lines().next().unwrap()).unwrap();
+    let block = &row["message"]["content"][1];
+    assert_eq!(block["type"], "image");
+    assert_eq!(block["source"]["media_type"], "image/png");
+    assert_eq!(block["source"]["data"], "iVBORw0K");
+}
+
+#[test]
+fn readable_managed_image_file_emits_an_image_block() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::openhuman::agent::multimodal::init_attachments_dir(dir.path().to_path_buf());
+    let path = dir.path().join("sample.png");
+    std::fs::write(&path, b"PNG").unwrap();
+    let s = String::from_utf8(build_stdin(
+        &[msg("user", &format!("file [IMAGE:{}]", path.display()))],
+        true,
+    ))
+    .unwrap();
+    let row: Value = serde_json::from_str(s.lines().next().unwrap()).unwrap();
+    assert_eq!(row["message"]["content"][1]["type"], "image");
+    assert_eq!(row["message"]["content"][1]["source"]["data"], "UE5H");
+}
+
+#[test]
 fn unmanaged_and_unreadable_images_degrade_without_reading_paths() {
     let s = String::from_utf8(build_stdin(
         &[msg(

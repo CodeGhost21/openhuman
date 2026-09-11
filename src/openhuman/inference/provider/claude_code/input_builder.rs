@@ -112,14 +112,23 @@ fn content_blocks(raw: &str) -> Vec<Value> {
 
 fn image_block(reference: &str) -> Option<Value> {
     let (media_type, data) = if let Some(rest) = reference.strip_prefix("data:") {
-        let (mime, encoded) = rest.split_once(";base64,")?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .ok()?;
+        let (metadata, payload) = rest.split_once(',')?;
+        let mime = metadata.split(';').next()?.to_string();
+        let (bytes, encoded) = if metadata
+            .split(';')
+            .any(|flag| flag.eq_ignore_ascii_case("base64"))
+        {
+            let bytes = base64::engine::general_purpose::STANDARD.decode(payload).ok()?;
+            (bytes, payload.to_string())
+        } else {
+            let bytes = percent_decode_bytes(payload)?;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            (bytes, encoded)
+        };
         if bytes.len() > 20 * 1024 * 1024 {
             return None;
         }
-        (mime.to_string(), encoded.to_string())
+        (mime, encoded)
     } else {
         if !is_managed_attachment_path(reference) {
             return None;
@@ -145,6 +154,24 @@ fn image_block(reference: &str) -> Option<Value> {
         )
     };
     Some(json!({"type":"image", "source":{"type":"base64", "media_type":media_type, "data":data}}))
+}
+
+fn percent_decode_bytes(input: &str) -> Option<Vec<u8>> {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = bytes.get(index + 1).and_then(|b| (*b as char).to_digit(16))?;
+            let low = bytes.get(index + 2).and_then(|b| (*b as char).to_digit(16))?;
+            decoded.push((high * 16 + low) as u8);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Some(decoded)
 }
 
 /// Fold prior turns into a single labelled transcript, or `None` when there
