@@ -645,17 +645,46 @@ async fn boot_sweep_handles_schema_init_failure_gracefully() {
         ..Config::default()
     };
 
-    // Execute the failing sweep path to exercise error-handling branch
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    let capture = Capture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(capture.clone())
+        .with_ansi(false)
+        .finish();
+    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+    // Execute the failing sweep path to exercise the real warning branch.
     let swept = sweep_orphaned_running_runs_on_boot(&config).await;
     assert_eq!(swept, 0);
 
-    // Verify error chain formatting preserves outer context and underlying cause
-    let inner = std::io::Error::new(
-        std::io::ErrorKind::PermissionDenied,
-        "disk permission denied",
+    let warning = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        warning.contains("Failed to initialize flows schema"),
+        "the sweep warning must preserve the schema context, got {warning:?}"
     );
-    let err = anyhow::Error::new(inner).context("Failed to initialize flows schema");
-    let formatted = format!("{err:#}");
-    assert!(formatted.contains("Failed to initialize flows schema"));
-    assert!(formatted.contains("disk permission denied"));
+    assert!(
+        warning.contains("disk permission denied"),
+        "the sweep warning must preserve the root cause, got {warning:?}"
+    );
 }
