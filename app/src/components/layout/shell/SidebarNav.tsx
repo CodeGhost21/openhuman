@@ -18,6 +18,7 @@ import {
   SidebarMenuLabel,
 } from '../../ui';
 import { NavIcon } from './navIcons';
+import { useCloudNavGate } from './useCloudNavGate';
 
 /**
  * Active-route matching for a nav entry. Mirrors the rules the former
@@ -54,7 +55,15 @@ export default function SidebarNav() {
   const navigate = useNavigate();
   const unreadCount = useAppSelector(state => selectUnreadCount(state.notifications.items));
 
-  const tabs = useMemo(() => NAV_TABS.map(tab => ({ ...tab, label: t(tab.labelKey) })), [t]);
+  const cloudAllowed = useCloudNavGate();
+  const tabs = useMemo(
+    () =>
+      NAV_TABS.filter(tab => !tab.cloudOnly || cloudAllowed).map(tab => ({
+        ...tab,
+        label: t(tab.labelKey),
+      })),
+    [cloudAllowed, t]
+  );
   const activeTab = tabs.find(tab => matchActive(tab.path, location.pathname));
 
   const handleClick = (tab: NavTab, active: boolean) => {
@@ -71,12 +80,15 @@ export default function SidebarNav() {
   };
 
   return (
-    // `SidebarGroup` supplies the px-2/py-1 flex-column band that used to sit
+    // `SidebarGroup` supplies the px-3/py-1 flex-column band that used to sit
     // directly on `<nav>`; the semantic landmark element stays a plain `<nav>`
     // (no primitive substitutes for that a11y role) and picks up
     // `shrink-0` so the caller no longer needs a wrapping div for it.
     <nav className="shrink-0" aria-label={t('nav.home')}>
-      <SidebarGroup>
+      {/* `pb-0` drops the primitive's own `py-1` bottom half. The gap down to
+          the separator is the separator's `my-*` alone, so the space between
+          the two lists has exactly one owner instead of three stacking. */}
+      <SidebarGroup className="pb-0">
         <SidebarMenu>
           {tabs.map(tab => {
             const active = matchActive(tab.path, location.pathname);
@@ -88,9 +100,16 @@ export default function SidebarNav() {
                   data-walkthrough={tab.walkthroughAttr}
                   onClick={() => handleClick(tab, active)}
                   title={tab.label}
-                  // A nav row, not a control: auto height and 14px type, so
-                  // the row breathes the way the shell's spacing scale expects.
-                  className="h-auto py-2 text-[14px]">
+                  // Sized to match the thread pills projected below the
+                  // separator: `h-8`, the same fixed 32px those rows use. This
+                  // was `h-auto py-2`, which resolved to ~36px against the
+                  // icon's 16px box — close enough to look like a mistake
+                  // rather than a distinction, since the two lists sit in one
+                  // column with only a hairline between them. `py-0` is needed
+                  // alongside it: `h-auto py-2` left the padding driving the
+                  // height, so setting `h-8` without it just re-added 16px.
+                  // 14px type is kept — it overrides the `md` size's `text-sm`.
+                  className="h-8 py-0 text-[14px]">
                   <SidebarMenuIcon>
                     <NavIcon id={tab.id} className="h-4 w-4" />
                     {showBadge && (

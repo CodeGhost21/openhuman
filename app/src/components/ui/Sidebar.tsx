@@ -87,6 +87,54 @@ function clampWidth(width: number, min: number, max: number): number {
   return Math.min(Math.max(width, min), max);
 }
 
+/**
+ * The widest the sidebar may render at, for a given viewport (#5907).
+ *
+ * Half the window, floored — so the column can never own more than half a
+ * narrow one. Inert on any real desktop: it only bites below `2 * maxWidth`,
+ * i.e. an 840px window at the default 420px cap.
+ *
+ * `min` wins over this on purpose. A window narrower than `2 * min` is past the
+ * point where a fraction is meaningful, and returning something below `min`
+ * would fight `clampWidth`'s floor and make the two disagree.
+ */
+function viewportCap(viewportWidth: number, min: number): number {
+  return Math.max(min, Math.floor(viewportWidth / 2));
+}
+
+/**
+ * The current window width, tracked across resizes.
+ *
+ * A listener rather than a CSS `max-width`, and the distinction is the whole
+ * point (#5941, Codex). A CSS-only clamp renders the right number while every
+ * consumer of the stored one — the rail's drag arithmetic, the arrow-key step,
+ * `aria-valuenow` — keeps reading the larger value. With a persisted 420 in a
+ * 414px viewport that renders a 207px column the rail cannot narrow at all:
+ * dragging fully left proposes ~213, `max-width` still pins 207, and the
+ * separator announces 420 for a 207px column. Clamping the value instead means
+ * there is one width and everything agrees with it.
+ *
+ * `Infinity` before mount so the cap is inert until a real measurement exists —
+ * a 0 here would collapse the sidebar to `min` for one frame.
+ */
+function useViewportWidth(): number {
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === 'undefined' ? Number.POSITIVE_INFINITY : window.innerWidth
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setViewportWidth(window.innerWidth);
+    // Sync once on mount: the lazy initial state above runs before any resize
+    // that happened between module evaluation and this effect.
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  return viewportWidth;
+}
+
 export interface SidebarProviderProps extends HTMLAttributes<HTMLDivElement> {
   /** Controlled open state. Omit for uncontrolled. */
   open?: boolean;
@@ -133,7 +181,14 @@ export const SidebarProvider = forwardRef<HTMLDivElement, SidebarProviderProps>(
     const [uncontrolledWidth, setUncontrolledWidth] = useState(() =>
       clampWidth(defaultWidth, minWidth, maxWidth)
     );
-    const width = clampWidth(widthProp ?? uncontrolledWidth, minWidth, maxWidth);
+    // One effective width, viewport included, handed to everything through
+    // context: the rendered column, the rail's drag origin, its arrow-key step
+    // and its `aria-valuenow`. The STORED value keeps the user's preference
+    // untouched — widening the window restores it — but nothing reads the
+    // stored value directly, so no consumer can disagree with what is on screen.
+    const viewportWidth = useViewportWidth();
+    const effectiveMax = Math.min(maxWidth, viewportCap(viewportWidth, minWidth));
+    const width = clampWidth(widthProp ?? uncontrolledWidth, minWidth, effectiveMax);
 
     const setOpen = useCallback(
       (next: boolean) => {
@@ -147,11 +202,15 @@ export const SidebarProvider = forwardRef<HTMLDivElement, SidebarProviderProps>(
 
     const setWidth = useCallback(
       (next: number) => {
-        const clamped = clampWidth(Math.round(next), minWidth, maxWidth);
+        // `effectiveMax`, not `maxWidth`: a drag in a narrow window must not be
+        // able to STORE a width the column can never render. Clamping here
+        // against the raw maximum would put the stored value and the rendered
+        // one back into disagreement — the same defect one layer up.
+        const clamped = clampWidth(Math.round(next), minWidth, effectiveMax);
         if (widthProp === undefined) setUncontrolledWidth(clamped);
         onWidthChange?.(clamped);
       },
-      [widthProp, onWidthChange, minWidth, maxWidth]
+      [widthProp, onWidthChange, minWidth, effectiveMax]
     );
 
     useEffect(() => {
@@ -175,9 +234,13 @@ export const SidebarProvider = forwardRef<HTMLDivElement, SidebarProviderProps>(
         width,
         setWidth,
         minWidth,
-        maxWidth,
+        // The ACTIVE maximum, so every consumer agrees on the ceiling as well
+        // as on the current value. `SidebarRail` publishes this as
+        // `aria-valuemax`; exposing the raw 420 here announced a ceiling the
+        // column could not reach in a narrow window.
+        maxWidth: effectiveMax,
       }),
-      [open, setOpen, toggleSidebar, width, setWidth, minWidth, maxWidth]
+      [open, setOpen, toggleSidebar, width, setWidth, minWidth, effectiveMax]
     );
 
     return (
@@ -280,7 +343,7 @@ export const SidebarRail = forwardRef<HTMLDivElement, SidebarRailProps>(
           window.removeEventListener('pointermove', handleMove);
           window.removeEventListener('pointerup', detach);
           window.removeEventListener('pointercancel', detach);
-          window.removeEventListener('blur-sm', detach);
+          window.removeEventListener('blur', detach);
           detachRef.current = null;
         };
 
@@ -322,7 +385,22 @@ export const SidebarRail = forwardRef<HTMLDivElement, SidebarRailProps>(
         onPointerDown={handlePointerDown}
         onKeyDown={handleKeyDown}
         className={cn(
-          'group relative w-px flex-none cursor-col-resize select-none self-stretch',
+          // `w-0`, not `w-px`: the rail sits between the column and the content
+          // card, so any layout width of its own makes the card's left gutter
+          // wider than its other three by exactly that much. The seam is drawn
+          // by the absolutely-positioned indicator below instead, which costs
+          // no width — and it only paints on hover/focus anyway.
+          //
+          // `z-20` is load-bearing, not decoration. `SidebarInset` — the content
+          // card, rendered AFTER this element by `RootShellLayout` — carries
+          // `relative z-10`, and the hit area below carried `z-10` too. Equal
+          // z-index means DOM order decides, so the card painted over the half
+          // of the hit area that overhangs it and pointer events never reached
+          // the rail there: `elementFromPoint` at the rail's own centre returned
+          // the content viewport, not this element (#5906). Raising the rail
+          // itself rather than the child lifts BOTH the hit area and the 1px
+          // seam, which share the cause.
+          'group relative z-20 w-0 flex-none cursor-col-resize select-none self-stretch',
           'bg-transparent focus:outline-hidden',
           className
         )}
@@ -331,7 +409,7 @@ export const SidebarRail = forwardRef<HTMLDivElement, SidebarRailProps>(
         <span className="absolute inset-y-0 -left-1 -right-1 z-10" />
         <span
           className={cn(
-            'absolute inset-0 transition-colors',
+            'absolute inset-y-0 left-0 w-px transition-colors',
             indicatorClassName ?? DEFAULT_RAIL_INDICATOR
           )}
         />
@@ -379,6 +457,15 @@ SidebarTrigger.displayName = 'SidebarTrigger';
 /**
  * The routed content beside the column. `unframed` renders it edge-to-edge —
  * the framed default is an inset, rounded card on the chrome.
+ *
+ * The card's hairline is painted by an `::after` overlay rather than by the
+ * element's own `box-shadow`. An inset shadow renders above the element's
+ * background but *below* its children's, so any page whose root paints an
+ * opaque fill — `Thread`'s `bg-background` on the chat surface is the one that
+ * exposed this — covered the edge and the page appeared borderless. The
+ * overlay sits above the content, is `pointer-events-none`, and inherits the
+ * radius, so it draws the same hairline on every page regardless of what the
+ * page paints.
  */
 export interface SidebarInsetProps extends HTMLAttributes<HTMLDivElement> {
   unframed?: boolean;
@@ -392,7 +479,13 @@ export const SidebarInset = forwardRef<HTMLDivElement, SidebarInsetProps>(
       data-unframed={unframed ? 'true' : undefined}
       className={cn(
         'relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface',
-        !unframed && 'm-3 rounded-2xl shadow-content-edge',
+        // `my-3 mr-3`, with NO left margin: the card butts against the sidebar
+        // column so the two read as one continuous surface, and the gutter the
+        // shell shows is the three outer edges. A left margin here put a strip
+        // of chrome between the nav and the content that nothing else lined up
+        // with.
+        !unframed &&
+          'my-3 mr-3 rounded-2xl after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[inherit] after:shadow-content-edge',
         className
       )}
       {...rest}
@@ -431,7 +524,7 @@ export const SidebarFooter = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivEl
     <div
       ref={ref}
       data-slot="sidebar-footer"
-      className={cn('flex flex-none flex-col gap-1 px-2 pb-2 pt-1', className)}
+      className={cn('flex flex-none flex-col gap-1 px-3 pb-2 pt-1', className)}
       {...rest}
     />
   )
@@ -457,7 +550,7 @@ export const SidebarGroup = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivEle
     <div
       ref={ref}
       data-slot="sidebar-group"
-      className={cn('relative flex w-full min-w-0 flex-col px-2 py-1', className)}
+      className={cn('relative flex w-full min-w-0 flex-col px-3 py-1', className)}
       {...rest}
     />
   )
@@ -476,7 +569,9 @@ export const SidebarGroupLabel = forwardRef<HTMLDivElement, SidebarGroupLabelPro
         ref={ref}
         data-slot="sidebar-group-label"
         className={cn(
-          'flex h-7 shrink-0 items-center px-2 text-micro font-medium uppercase tracking-wide text-content-faint',
+          // px-2.5 matches SidebarMenuButton's own inner padding, so a group
+          // heading's text sits on the same left edge as the row labels under it.
+          'flex h-7 shrink-0 items-center px-2.5 text-micro font-medium uppercase tracking-wide text-content-faint',
           className
         )}
         {...rest}
@@ -540,10 +635,17 @@ const MENU_BUTTON_SIZES: Record<SidebarMenuButtonSize, string> = {
 /**
  * One navigation row.
  *
- * The active state is a neutral fill lifted off the chrome, not an accent tint:
- * the chrome carries the theme's hue, so tinting a pill on top of it stacks two
- * colours and reads as noise. Weight and contrast carry the selection instead,
- * and the fills are alpha-based so they lift against whatever the theme paints.
+ * The active state is a solid `primary-500` pill with inverted text. This was
+ * a neutral `bg-surface/70` fill, on the reasoning that the chrome carries the
+ * theme's hue so an accent pill stacks two colours. That held while the chrome
+ * was a themed WebGL mesh; the default backdrop is flat now and the chrome is a
+ * plain neutral, so a neutral pill on it is the thing that reads as noise —
+ * there is nothing for it to lift against. The accent is the only colour in
+ * this column, which is what makes it legible as *selection* rather than
+ * decoration.
+ *
+ * The hover/idle states stay alpha-based so they still lift against whatever a
+ * theme paints behind them.
  */
 export const SidebarMenuButton = forwardRef<HTMLButtonElement, SidebarMenuButtonProps>(
   (
@@ -572,7 +674,7 @@ export const SidebarMenuButton = forwardRef<HTMLButtonElement, SidebarMenuButton
           'disabled:pointer-events-none disabled:opacity-50',
           MENU_BUTTON_SIZES[size],
           isActive
-            ? 'bg-surface/70 font-semibold text-content'
+            ? 'bg-primary-500 font-semibold text-content-inverted'
             : 'text-content-muted hover:bg-surface/40 hover:text-content-secondary',
           className
         )}

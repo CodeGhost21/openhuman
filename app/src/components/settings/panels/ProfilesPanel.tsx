@@ -8,8 +8,9 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { LuPlus } from 'react-icons/lu';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
+import { errorMessage } from '../../../lib/errorMessage';
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
   deleteAgentProfile,
@@ -22,12 +23,10 @@ import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import Button from '../../ui/Button';
 import { SettingsEmptyState, SettingsSection } from '../controls';
 import SettingsPanel from '../layout/SettingsPanel';
-import { settingsNavState } from '../modal/settingsOverlay';
 
 const ProfilesPanel = () => {
   const { t } = useT();
   const navigate = useNavigate();
-  const location = useLocation();
   const dispatch = useAppDispatch();
   const profiles = useAppSelector(selectAgentProfiles);
   const activeId = useAppSelector(selectActiveAgentProfileId);
@@ -45,7 +44,9 @@ const ProfilesPanel = () => {
       try {
         await dispatch(selectAgentProfile(id)).unwrap();
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err));
+        // See #5900: `.unwrap()` rejects with a SerializedError, so the old
+        // `instanceof` guard rendered "[object Object]" here.
+        setActionError(errorMessage(err, 'Failed to switch profile'));
       }
     },
     [dispatch]
@@ -58,7 +59,7 @@ const ProfilesPanel = () => {
       try {
         await dispatch(deleteAgentProfile(id)).unwrap();
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err));
+        setActionError(errorMessage(err, 'Failed to delete profile'));
       }
     },
     [dispatch, t]
@@ -72,7 +73,7 @@ const ProfilesPanel = () => {
           type="button"
           variant="primary"
           size="sm"
-          onClick={() => navigate('/settings/profiles/new', settingsNavState(location))}>
+          onClick={() => navigate('/settings/profiles/new')}>
           <LuPlus className="h-4 w-4" />
           {t('settings.profiles.new')}
         </Button>
@@ -140,12 +141,7 @@ const ProfilesPanel = () => {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        onClick={() =>
-                          navigate(
-                            `/settings/profiles/edit/${profile.id}`,
-                            settingsNavState(location)
-                          )
-                        }>
+                        onClick={() => navigate(`/settings/profiles/edit/${profile.id}`)}>
                         {t('common.edit')}
                       </Button>
                       {!profile.builtIn && (

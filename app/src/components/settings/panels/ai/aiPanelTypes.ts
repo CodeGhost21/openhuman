@@ -28,7 +28,14 @@ export type CloudProvider = {
   maskedKey: string;
 };
 
-export type OllamaState = 'disabled' | 'missing' | 'stopped' | 'starting' | 'running' | 'error';
+export type OllamaState =
+  | 'disabled'
+  | 'missing'
+  | 'stopped'
+  | 'starting'
+  | 'running'
+  | 'degraded'
+  | 'error';
 
 export type OllamaModel = { id: string; sizeBytes: number; family: string };
 
@@ -75,6 +82,16 @@ export type AISettings = {
 export type LocalChipSlug = 'lmstudio' | 'ollama' | 'omlx';
 
 export type CustomDialogSource =
+  /**
+   * Managed routing — OpenHuman picks the model. It carries no model id of its
+   * own, which is the whole point: it is the "let the product decide" option,
+   * and it exists in this union so the shared picker can offer a way BACK to
+   * managed. Without it, choosing any specific model was a one-way door.
+   *
+   * Maps to `ProviderRef` `{ kind: 'default' }` for routing, and to a null
+   * model override in the chat composer.
+   */
+  | { kind: 'managed' }
   | { kind: 'cloud'; providerSlug: string }
   | { kind: 'local' }
   | { kind: 'claude-code' };
@@ -323,10 +340,6 @@ export function providerToggleAriaLabel(
     enabled ? t('settings.ai.disconnectProvider') : t('settings.ai.connectProviderLabel'),
     { label }
   );
-}
-
-export function humanizeModelId(id: string): string {
-  return id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 export function appendTemperatureToProviderString(
