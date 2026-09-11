@@ -548,7 +548,10 @@ fn migration_normalizes_provider_but_preserves_profile_name_casing() {
     let profile = data.profiles.get("provider:deepseek:Work").unwrap();
     assert_eq!(profile.id, "provider:deepseek:Work");
     assert_eq!(profile.provider, "provider:deepseek");
-    assert_eq!(data.active_profiles.get("provider:deepseek"), Some(&profile.id));
+    assert_eq!(
+        data.active_profiles.get("provider:deepseek"),
+        Some(&profile.id)
+    );
 }
 
 #[test]
