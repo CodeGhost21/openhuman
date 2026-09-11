@@ -1965,7 +1965,7 @@ fn group_first_time(group: crate::core::all::DomainGroup) -> bool {
     group_first_time_when_bus_ready(
         DONE.get_or_init(|| Mutex::new(HashSet::new())),
         group,
-        crate::core::event_bus::global().is_some(),
+        crate::core::bus::BUS.get().is_some(),
     )
 }
 
