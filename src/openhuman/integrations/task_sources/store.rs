@@ -672,7 +672,7 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
     conn.execute_batch("PRAGMA foreign_keys = ON;")
         .context("Failed to set task_sources DB connection pragmas")?;
 
-    ensure_schema_initialized(&conn, &db_path)?;
+    ensure_schema_initialized(&mut conn, &db_path)?;
 
     f(&conn)
 }
