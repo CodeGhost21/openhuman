@@ -734,14 +734,12 @@ impl AuthProfilesStore {
         }
         persisted.profiles = new_persisted_profiles;
         profiles = new_profiles;
-
         if persist && (!dropped_ids.is_empty() || migrated || keychain_migrated || key_migrated) {
             self.write_persisted_locked(&persisted)?;
             for id in pending_keychain_deletes {
                 self.keychain_delete_secrets(&id);
             }
         }
-
         Ok(AuthProfilesData {
             schema_version: persisted.schema_version,
             updated_at: parse_datetime_with_fallback(&persisted.updated_at),
