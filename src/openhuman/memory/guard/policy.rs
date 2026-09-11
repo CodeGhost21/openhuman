@@ -35,10 +35,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use tinycortex_api::capabilities::Capability;
-use tinycortex_api::error::MemoryError;
-use tinycortex_api::provider::types::SourceScope;
-use tinycortex_api::types::MemoryTaint;
+use crate::openhuman::memory::api::capabilities::Capability;
+use crate::openhuman::memory::api::error::MemoryError;
+use crate::openhuman::memory::api::provider::types::SourceScope;
+use crate::openhuman::memory::api::types::MemoryTaint;
 
 use crate::core::subsystem::DriverClass;
 use crate::openhuman::config::schema::MemoryHooksConfig;
@@ -329,8 +329,7 @@ impl GuardPolicy {
     ///
     /// For [`DriverClass::External`] the content goes through the same
     /// conservative secret/PII scrubber every other host write path uses
-    /// (`memory::store::safety::sanitize_text`, re-exported from the tinycortex
-    /// crate).
+    /// (`memory::safety::sanitize_text`).
     ///
     /// **Do not substitute `memory::util::redact::redact` here.** That function
     /// is a *log* redactor: it returns an 8-hex-character SHA-256 prefix, so
@@ -344,36 +343,22 @@ impl GuardPolicy {
     /// same time as the class check that selects it.
     pub fn redact_outbound<'a>(&self, content: &'a str) -> Cow<'a, str> {
         match self.class {
-            // `Module` sits with the in-process classes, and the test for this
-            // grouping is "does the content leave the device", not "is the code
-            // compiled in". A loaded module is in this address space and makes no
-            // egress of its own — the memory module's embeddings go back *to* the
-            // host, which is the whole point of that split — so there is no
-            // transfer here to disclose or scrub.
-            //
-            // Scrubbing would also be actively destructive for the same reason it
-            // would be for `Embedded`: these are the user's own memory writes, and
-            // sanitizing them would silently corrupt the data being stored rather
-            // than protect anything.
             DriverClass::Embedded | DriverClass::Module | DriverClass::Null => {
                 Cow::Borrowed(content)
             }
             DriverClass::External => {
-                Cow::Owned(crate::openhuman::memory::store::safety::sanitize_text(content).value)
+                Cow::Owned(crate::openhuman::memory::safety::sanitize_text(content).value)
             }
         }
     }
 
     /// [`Self::redact_outbound`] for structured payloads (KV values, document
-    /// metadata), via the crate's `sanitize_json`. Same class rule: an
+    /// metadata), via `memory::safety::sanitize_json`. Same class rule: an
     /// unmodified pass-through for embedded and null drivers.
     pub fn redact_outbound_json(&self, value: serde_json::Value) -> serde_json::Value {
         match self.class {
-            // Same grouping and the same reason as `redact_outbound`.
             DriverClass::Embedded | DriverClass::Module | DriverClass::Null => value,
-            DriverClass::External => {
-                crate::openhuman::memory::store::safety::sanitize_json(&value).value
-            }
+            DriverClass::External => crate::openhuman::memory::safety::sanitize_json(&value).value,
         }
     }
 
