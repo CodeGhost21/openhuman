@@ -589,14 +589,17 @@ fn attachments_dir() -> PathBuf {
 /// Whether a provider image reference points inside this process' managed
 /// attachment stash. Raw channel-supplied filesystem paths are never trusted.
 pub fn is_managed_attachment_path(path: &str) -> bool {
+    managed_attachment_path(path).is_some()
+}
+
+/// Return the canonical path when `path` resolves inside the managed stash.
+/// Callers should use this returned path for subsequent reads so the checked
+/// path, rather than an attacker-controlled spelling, is what gets opened.
+pub fn managed_attachment_path(path: &str) -> Option<PathBuf> {
     let candidate = Path::new(path);
-    let Ok(candidate) = candidate.canonicalize() else {
-        return false;
-    };
-    let Ok(root) = attachments_dir().canonicalize() else {
-        return false;
-    };
-    candidate.starts_with(root)
+    let candidate = candidate.canonicalize().ok()?;
+    let root = attachments_dir().canonicalize().ok()?;
+    candidate.starts_with(root).then_some(candidate)
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::agent::multimodal::{
-    is_managed_attachment_path, rehydrate_image_placeholders,
+    managed_attachment_path, rehydrate_image_placeholders,
 };
 
 /// Build the bytes to write to claude's stdin. Returns an empty `Vec`
@@ -122,6 +122,12 @@ fn image_block(reference: &str) -> Option<Value> {
     let (media_type, data) = if let Some(rest) = reference.strip_prefix("data:") {
         let (metadata, payload) = rest.split_once(',')?;
         let mime = metadata.split(';').next()?.to_string();
+        if !matches!(
+            mime.to_ascii_lowercase().as_str(),
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+        ) {
+            return None;
+        }
         let (bytes, encoded) = if metadata
             .split(';')
             .any(|flag| flag.eq_ignore_ascii_case("base64"))
@@ -140,15 +146,13 @@ fn image_block(reference: &str) -> Option<Value> {
         }
         (mime, encoded)
     } else {
-        if !is_managed_attachment_path(reference) {
-            return None;
-        }
-        let metadata = std::fs::metadata(reference).ok()?;
+        let path = managed_attachment_path(reference)?;
+        let metadata = std::fs::metadata(&path).ok()?;
         if metadata.len() > 20 * 1024 * 1024 {
             return None;
         }
-        let bytes = std::fs::read(reference).ok()?;
-        let lower = reference.to_ascii_lowercase();
+        let bytes = std::fs::read(&path).ok()?;
+        let lower = path.to_string_lossy().to_ascii_lowercase();
         let mime = if lower.ends_with(".png") {
             "image/png"
         } else if lower.ends_with(".gif") {
