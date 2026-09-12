@@ -20,6 +20,53 @@ fn write_mcp_http_config_emits_http_url_with_bearer_header() {
 }
 
 #[test]
+fn child_path_prepends_cli_dir_and_keeps_inherited_entries() {
+    let _env = super::super::ENV_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    struct PathRestore(Option<std::ffi::OsString>);
+    impl Drop for PathRestore {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    let _restore = PathRestore(std::env::var_os("PATH"));
+    let inherited = std::env::join_paths([
+        std::path::Path::new("/usr/bin"),
+        std::path::Path::new("/bin"),
+    ])
+    .expect("valid test paths");
+    std::env::set_var("PATH", inherited);
+
+    let combined = child_path_with_user_bins(std::path::Path::new("/Users/test/.local/bin/claude"));
+    let dirs: Vec<PathBuf> = std::env::split_paths(&combined).collect();
+
+    assert_eq!(
+        dirs.first().map(|p| p.as_path()),
+        Some(std::path::Path::new("/Users/test/.local/bin"))
+    );
+    assert!(dirs.iter().any(|p| p == std::path::Path::new("/usr/bin")));
+    assert!(dirs.iter().any(|p| p == std::path::Path::new("/bin")));
+    let cli_idx = dirs
+        .iter()
+        .position(|p| p == std::path::Path::new("/Users/test/.local/bin"))
+        .expect("CLI directory");
+    let usr_idx = dirs
+        .iter()
+        .position(|p| p == std::path::Path::new("/usr/bin"))
+        .expect("inherited directory");
+    assert!(
+        cli_idx < usr_idx,
+        "CLI dir must come before inherited /usr/bin"
+    );
+    assert!(!dirs.iter().any(|p| p.as_os_str().is_empty()));
+}
+
+#[test]
 fn large_system_prompt_is_written_to_file_instead_of_argv() {
     let dir = tempfile::tempdir().expect("tempdir");
     let prompt = "system instruction\n".repeat(2_500);
@@ -236,5 +283,3 @@ fn the_shape_of_the_line_is_reported() {
     assert!(shape("panic: claude-code crashed").contains("non-json"));
     assert!(shape("   ").contains("blank"));
 }
-
-use super::*;
