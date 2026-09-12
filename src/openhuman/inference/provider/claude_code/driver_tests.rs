@@ -1,4 +1,3 @@
-
 use super::*;
 
 #[test]
@@ -223,6 +222,7 @@ fn push_bounded_handles_an_ascii_cap_exactly() {
     super::push_bounded(&mut acc, "abcdef", 3);
     assert_eq!(acc, "abc");
 }
+
 #[test]
 fn parse_error_events_produce_a_log_line() {
     let ev = ClaudeCodeEvent::ParseError {
