@@ -154,18 +154,30 @@ export const CustomRoutingDialog = ({
     setTestBusy(false);
   };
 
-  // The test call must name the same slug the save will persist, so this
-  // mirrors `registrySlug` above rather than assuming a non-cloud source is
-  // local: a `claude-code` route used to be tested as `ollama:<model>`, which
-  // asked Ollama for a model it has never heard of and reported the failure as
-  // the claude-code provider's.
-  const currentProviderString =
-    source == null || source.kind === 'managed' || registrySlug == null
-      ? null
-      : appendTemperatureToProviderString(
-          `${registrySlug}:${model.trim()}`,
-          temperature == null || !Number.isFinite(temperature) ? null : temperature
-        );
+  // Exhaustive on `CustomDialogSource['kind']` rather than a cloud-vs-rest
+  // ternary. The old shape sent *every* non-cloud kind as `ollama:<model>`, so a
+  // Claude Code route tested against the local runtime and could only ever fail
+  // — while the dialog above it read "Claude Code CLI · <model>" (#6125). A
+  // future source kind is now a compile error here instead of another silent
+  // `ollama:` fallback, so do NOT add a `default:` arm.
+  //
+  // The `@<temp>` suffix is appended on every arm, matching `serializeProviderRef`
+  // — the Save path. `TemperatureOverrideField` below is rendered for every kind,
+  // so a claude-code route really can carry an override, and Test exists to
+  // exercise the string the saved route will actually run. A Test that quietly
+  // dropped a field Save persists would be the same defect in a smaller size.
+  const currentProviderString = ((): string | null => {
+    if (source == null || source.kind === 'managed') return null;
+    const temp = temperature == null || !Number.isFinite(temperature) ? null : temperature;
+    switch (source.kind) {
+      case 'cloud':
+        return appendTemperatureToProviderString(`${source.providerSlug}:${model.trim()}`, temp);
+      case 'claude-code':
+        return appendTemperatureToProviderString(`claude-code:${model.trim()}`, temp);
+      case 'local':
+        return appendTemperatureToProviderString(`ollama:${model.trim()}`, temp);
+    }
+  })();
 
   const handleSave = () => {
     if (!source || !canSave) return;
