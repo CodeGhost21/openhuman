@@ -96,3 +96,4 @@ https://claude.ai/code/session_01UMNxXS5ucxpzNoHnuhyQPu
   - Improved authentication status checks when Claude is launched outside a terminal.
   - Claude operations now use a five-minute timeout.
 <!-- end of auto-generated comment: release notes by coderabbit.ai -->
+

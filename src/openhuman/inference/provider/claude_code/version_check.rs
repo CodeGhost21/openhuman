@@ -67,7 +67,24 @@ fn well_known_candidates() -> Vec<PathBuf> {
 /// First candidate that resolves to a file (follows symlinks — the native
 /// installer's `~/.local/bin/claude` is a symlink into a versioned dir).
 fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
-    candidates.iter().find(|p| p.is_file()).cloned()
+    candidates
+        .iter()
+        .find(|p| p.is_file() && is_executable(p))
+        .cloned()
+}
+
+#[cfg(unix)]
+fn is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &std::path::Path) -> bool {
+    path.is_file()
 }
 
 fn which_on_path(name: &str) -> Option<PathBuf> {
