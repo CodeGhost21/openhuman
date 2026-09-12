@@ -86,7 +86,6 @@ https://claude.ai/code/session_01UMNxXS5ucxpzNoHnuhyQPu
 
 
 <!-- This is an auto-generated comment: release notes by coderabbit.ai -->
-
 ## Summary by CodeRabbit
 
 - **Bug Fixes**
@@ -94,5 +93,7 @@ https://claude.ai/code/session_01UMNxXS5ucxpzNoHnuhyQPu
   - Claude Code now launches more reliably when installed through native, package-manager, user-local, or Homebrew setups.
   - Added support for honoring configured executable overrides and prioritizing the intended CLI installation.
   - Preserved existing system commands while ensuring the selected Claude CLI is available during execution.
-
+  - Improved authentication status checks when Claude is launched outside a terminal.
+  - Claude operations now use a five-minute timeout.
 <!-- end of auto-generated comment: release notes by coderabbit.ai -->
+
