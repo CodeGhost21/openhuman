@@ -450,7 +450,7 @@ pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn Embedd
             None => Ok(None),
         };
         let requires_key = matches!(provider_slug, "voyage" | "openai" | "cohere")
-            || (provider_slug == "custom" && custom_endpoint.is_none());
+            || (provider_slug == "custom" && raw_custom_endpoint.is_none());
         if let Ok(custom_endpoint) = custom_endpoint {
             match create_embedding_provider_with_config(
                 config,
