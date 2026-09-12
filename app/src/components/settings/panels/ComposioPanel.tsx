@@ -188,7 +188,10 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
         clearTimeout(saveStatusTimer.current);
         saveStatusTimer.current = null;
       }
-      const message = err instanceof Error && err.message ? err.message : t('composio.saveFailed');
+      const errorMessage = err instanceof Error ? err.message.toLowerCase() : '';
+      const message = errorMessage.includes('invalid composio api key')
+        ? t('settings.composio.invalidApiKey')
+        : t('composio.saveFailed');
       setSaveError(message);
       setSaveStatus('error');
     } finally {
