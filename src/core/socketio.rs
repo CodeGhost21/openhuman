@@ -84,8 +84,31 @@ struct HandshakeAuth {
 /// A missing `Origin` header is treated as a native (non-browser) client
 /// and accepted — only the cross-origin browser-page case is the targeted
 /// bad actor here.
+/// Same env var the JSON-RPC CORS layer reads (`jsonrpc::ALLOWED_ORIGINS_ENV`).
+/// Comma-separated, exact-match origins for operator-controlled surfaces that
+/// are not on loopback — a tailnet host, an E2E driver, a reverse proxy.
+#[cfg(feature = "http-server")]
+const ALLOWED_ORIGINS_ENV: &str = "OPENHUMAN_CORE_ALLOWED_ORIGINS";
+
 #[cfg(feature = "http-server")]
 pub(crate) fn origin_is_allowed(origin: Option<&str>) -> bool {
+    origin_is_allowed_with_extra(origin, std::env::var(ALLOWED_ORIGINS_ENV).ok().as_deref())
+}
+
+/// Origin gate with the extra allowlist passed explicitly so tests do not have
+/// to mutate process-global env.
+///
+/// Chat is a socket-only transport (`chat:start` / `chat:cancel`) with no
+/// JSON-RPC equivalent. Before this consulted `OPENHUMAN_CORE_ALLOWED_ORIGINS`,
+/// a non-loopback browser origin that the RPC CORS layer already accepted was
+/// still dropped here: the page loaded and every read RPC succeeded, but the
+/// socket was disconnected at handshake and pressing Send did nothing, with no
+/// error surfaced to the user.
+#[cfg(feature = "http-server")]
+pub(crate) fn origin_is_allowed_with_extra(
+    origin: Option<&str>,
+    extra_origins: Option<&str>,
+) -> bool {
     let Some(origin) = origin else {
         return true; // native clients (CLI, Tauri shell) — no Origin header
     };
@@ -104,10 +127,25 @@ pub(crate) fn origin_is_allowed(origin: Option<&str>) -> bool {
     };
     // `url::Url::host_str` returns IPv6 hosts with surrounding brackets,
     // hostnames bare. Accept both shapes.
-    matches!(
+    if matches!(
         parsed.host_str(),
         Some("localhost" | "127.0.0.1" | "::1" | "[::1]" | "tauri.localhost")
-    )
+    ) {
+        return true;
+    }
+
+    // Operator-controlled extra origins. Exact string match, same rule as the
+    // JSON-RPC layer — no host-only or prefix matching, so the decoy cases
+    // below stay rejected even when the allowlist is populated.
+    if let Some(extra) = extra_origins {
+        for candidate in extra.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            if candidate == origin {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 /// True when `socket` finished the handshake with a valid bearer token.
@@ -704,6 +742,13 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                     // stops queueing the thread for retry and reads on the
                     // strength of a room it is not in.
                     let joined = join_room_logged(&socket, &room, &socket.id.to_string());
+                    // Hand this socket whatever the approval gate still has
+                    // parked on the thread, BEFORE acknowledging the join, so a
+                    // client that orders its recovery reads against the ack
+                    // already holds the card.
+                    if joined {
+                        replay_parked_approval(&socket, thread_id);
+                    }
                     ack.send(&ThreadSubscribeAck { joined }).ok();
                 },
             );
@@ -1495,6 +1540,52 @@ fn event_alias(name: &str) -> Option<String> {
     None
 }
 
+/// Re-send the approval parked on `thread_id`, if any, to the socket that just
+/// joined that thread's room.
+///
+/// An approval is durable server-side state — the gate holds the parked call
+/// and a `pending_approvals` row — but it reaches the UI as ONE fire-and-forget
+/// emit from [`emit_web_channel_event`]. That emit can miss with no error and
+/// no trace: `io.to(room).emit()` on a room whose only member has gone is a
+/// silent no-op, there is no disconnect handler here so the core never learns a
+/// client died, a socket that reconnects lands in the thread room only for
+/// events emitted *after* it joins, and the bridge drops frames wholesale on
+/// broadcast lag. Any one of those leaves the turn parked forever with no card
+/// on screen and no way for the user to act.
+///
+/// `thread:subscribe` is the one signal that says "this socket is now watching
+/// this thread", which makes it the place to reconcile the two. Replaying is
+/// safe to repeat: the client keys the card by `request_id` and a decided
+/// request is no longer parked, so a socket that already has the card just
+/// re-renders the same one.
+#[cfg(feature = "http-server")]
+fn replay_parked_approval(socket: &SocketRef, thread_id: &str) {
+    let Some(gate) = crate::openhuman::security::approval::ApprovalGate::try_global() else {
+        return;
+    };
+    let Some(row) = gate.parked_request_for_thread(thread_id) else {
+        return;
+    };
+    let client_id = socket.id.to_string();
+    let event = crate::openhuman::web_chat::approval_request_event(
+        &row.request_id,
+        &row.tool_name,
+        &row.action_summary,
+        &row.args_redacted,
+        thread_id,
+        &client_id,
+    );
+    let Ok(payload) = serde_json::to_value(&event) else {
+        return;
+    };
+    log::info!(
+        "[socketio] replaying parked approval_request to joining socket client_id={client_id} thread_id={thread_id} request_id={} tool={}",
+        row.request_id,
+        row.tool_name
+    );
+    emit_with_aliases(socket, "approval_request", &payload);
+}
+
 #[cfg(feature = "http-server")]
 fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value) {
     let _ = socket.emit(name, payload);
@@ -1508,7 +1599,7 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
 #[cfg(all(test, feature = "http-server"))]
 mod tests {
     use super::{
-        channel_connection_update_payload, event_alias, origin_is_allowed,
+        channel_connection_update_payload, event_alias, origin_is_allowed_with_extra,
         publish_companion_state_changed, subscribe_companion_state_changed,
     };
 
@@ -1575,7 +1666,7 @@ mod tests {
 
     #[test]
     fn origin_allowlist_accepts_native_clients() {
-        assert!(origin_is_allowed(None));
+        assert!(origin_is_allowed_with_extra(None, None));
     }
 
     #[test]
@@ -1586,50 +1677,141 @@ mod tests {
         //   - Linux / older Windows builds use `https://tauri.localhost`
         // All three flavours are the same trust tier (the bundled webview),
         // so each must pass the handshake gate.
-        assert!(origin_is_allowed(Some("tauri://localhost")));
-        assert!(origin_is_allowed(Some("https://tauri.localhost")));
-        assert!(origin_is_allowed(Some("http://tauri.localhost")));
+        assert!(origin_is_allowed_with_extra(
+            Some("tauri://localhost"),
+            None
+        ));
+        assert!(origin_is_allowed_with_extra(
+            Some("https://tauri.localhost"),
+            None
+        ));
+        assert!(origin_is_allowed_with_extra(
+            Some("http://tauri.localhost"),
+            None
+        ));
     }
 
     #[test]
     fn origin_allowlist_accepts_local_dev_server() {
-        assert!(origin_is_allowed(Some("http://localhost:1420")));
-        assert!(origin_is_allowed(Some("http://127.0.0.1:1420")));
-        assert!(origin_is_allowed(Some("http://[::1]:1420")));
+        assert!(origin_is_allowed_with_extra(
+            Some("http://localhost:1420"),
+            None
+        ));
+        assert!(origin_is_allowed_with_extra(
+            Some("http://127.0.0.1:1420"),
+            None
+        ));
+        assert!(origin_is_allowed_with_extra(
+            Some("http://[::1]:1420"),
+            None
+        ));
         // Loopback without an explicit port (some CEF builds stamp this
         // shape when the shell runs on the default port).
-        assert!(origin_is_allowed(Some("http://localhost")));
+        assert!(origin_is_allowed_with_extra(Some("http://localhost"), None));
     }
 
     #[test]
     fn origin_allowlist_rejects_cross_origin_browser_pages() {
-        assert!(!origin_is_allowed(Some("https://attacker.example")));
-        assert!(!origin_is_allowed(Some("http://evil.local")));
-        assert!(!origin_is_allowed(Some("null")));
-        assert!(!origin_is_allowed(Some("")));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://attacker.example"),
+            None
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("http://evil.local"),
+            None
+        ));
+        assert!(!origin_is_allowed_with_extra(Some("null"), None));
+        assert!(!origin_is_allowed_with_extra(Some(""), None));
     }
 
     #[test]
     fn origin_allowlist_rejects_host_prefix_decoys() {
         // Regression: `starts_with("localhost")` accepted these; the exact
         // host match must not.
-        assert!(!origin_is_allowed(Some(
-            "http://localhost.attacker.example"
-        )));
-        assert!(!origin_is_allowed(Some(
-            "http://127.0.0.1.attacker.example"
-        )));
-        assert!(!origin_is_allowed(Some("https://localhost-evil")));
+        assert!(!origin_is_allowed_with_extra(
+            Some("http://localhost.attacker.example"),
+            None
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("http://127.0.0.1.attacker.example"),
+            None
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://localhost-evil"),
+            None
+        ));
         // Same rule applies to the tauri.localhost host — must be exact.
-        assert!(!origin_is_allowed(Some(
-            "http://tauri.localhost.attacker.example"
-        )));
-        assert!(!origin_is_allowed(Some("https://tauri.localhost.evil")));
+        assert!(!origin_is_allowed_with_extra(
+            Some("http://tauri.localhost.attacker.example"),
+            None
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://tauri.localhost.evil"),
+            None
+        ));
+    }
+
+    #[test]
+    fn origin_allowlist_accepts_env_allowlisted_origin() {
+        // Regression: a non-loopback browser origin that the JSON-RPC CORS
+        // layer accepts must also pass the socket handshake, or chat (a
+        // socket-only transport) silently never connects.
+        let extra = Some("https://box.example.ts.net:9000");
+        assert!(origin_is_allowed_with_extra(
+            Some("https://box.example.ts.net:9000"),
+            extra
+        ));
+    }
+
+    #[test]
+    fn origin_allowlist_env_handles_comma_list_and_whitespace() {
+        let extra = Some("https://a.example:9000 , https://b.example:8443");
+        assert!(origin_is_allowed_with_extra(
+            Some("https://a.example:9000"),
+            extra
+        ));
+        assert!(origin_is_allowed_with_extra(
+            Some("https://b.example:8443"),
+            extra
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://c.example"),
+            extra
+        ));
+    }
+
+    #[test]
+    fn origin_allowlist_env_requires_exact_match() {
+        // Populating the allowlist must not loosen the decoy rules: no port
+        // wildcarding, no scheme swapping, no suffix matching.
+        let extra = Some("https://box.example.ts.net:9000");
+        assert!(!origin_is_allowed_with_extra(
+            Some("http://box.example.ts.net:9000"),
+            extra
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://box.example.ts.net:9001"),
+            extra
+        ));
+        assert!(!origin_is_allowed_with_extra(
+            Some("https://box.example.ts.net.attacker.example:9000"),
+            extra
+        ));
+    }
+
+    #[test]
+    fn origin_allowlist_env_does_not_rescue_null_or_empty() {
+        let extra = Some("null,");
+        assert!(!origin_is_allowed_with_extra(Some("null"), extra));
+        assert!(!origin_is_allowed_with_extra(Some(""), extra));
     }
 
     #[test]
     fn origin_allowlist_rejects_unparseable_origin() {
-        assert!(!origin_is_allowed(Some("not a url")));
-        assert!(!origin_is_allowed(Some("javascript:alert(1)")));
+        assert!(!origin_is_allowed_with_extra(Some("not a url"), None));
+        assert!(!origin_is_allowed_with_extra(
+            Some("javascript:alert(1)"),
+            None
+        ));
     }
 }
