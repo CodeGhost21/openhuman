@@ -102,6 +102,96 @@ fn config_aware_factory_builds_managed_provider() {
     }
 }
 
+/// #6032: both the config-URL and default-URL paths of the `"ollama"` arm must
+/// construct successfully. This is the build-side smoke check; the *binding*
+/// proof (that `config.local_ai.base_url` is the URL actually used) is
+/// [`config_aware_factory_ollama_embeds_against_config_base_url`] below —
+/// `create_embedding_provider_with_config` returns `Box<dyn EmbeddingProvider>`,
+/// whose trait surface is `name`/`model_id`/`dimensions`/`embed`, so there is
+/// no `base_url()` accessor to assert against here.
+#[test]
+fn config_aware_factory_ollama_honours_config_base_url() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.local_ai.base_url = Some("http://custom-ollama:12345".to_string());
+
+    // Building must succeed with the custom URL.
+    let p =
+        create_embedding_provider_with_config(&config, "ollama", "nomic-embed-text", 768, "", None)
+            .expect("ollama provider must build with a custom local_ai.base_url");
+    assert_eq!(p.name(), "ollama");
+    assert_eq!(p.dimensions(), 768);
+    // The default-URL build (no custom config) must also succeed and produce
+    // the same provider type.
+    let mut default_config = test_config(&tmp);
+    default_config.local_ai.base_url = None;
+    let default_p = create_embedding_provider_with_config(
+        &default_config,
+        "ollama",
+        "nomic-embed-text",
+        768,
+        "",
+        None,
+    )
+    .expect("ollama provider must build with default URL");
+    assert_eq!(default_p.name(), "ollama");
+}
+
+/// #6032 binding proof: an `"ollama"` provider built through
+/// `create_embedding_provider_with_config` must send its embed request to
+/// `config.local_ai.base_url`, not the env-only `ollama_base_url()` default. A
+/// local mock stands in for the Ollama daemon at a random port set as
+/// `local_ai.base_url`; a regression to the credential-store path (which calls
+/// `ollama_base_url()` → `localhost:11434`) would never hit the mock. This is
+/// the assertion the build-only test above cannot make, since the returned
+/// trait object exposes no URL accessor.
+#[tokio::test]
+async fn config_aware_factory_ollama_embeds_against_config_base_url() {
+    use std::sync::{Arc, Mutex};
+
+    use axum::{extract::State, routing::post, Json, Router};
+
+    // Mock Ollama `/api/embed`: records that it was hit and echoes a
+    // 3-dimensional vector (matching the requested `dims`).
+    #[derive(Clone, Default)]
+    struct Hit {
+        count: Arc<Mutex<usize>>,
+    }
+    let hit = Hit::default();
+    let app = Router::new()
+        .route(
+            "/api/embed",
+            post(
+                |State(h): State<Hit>, Json(_body): Json<serde_json::Value>| async move {
+                    *h.count.lock().unwrap() += 1;
+                    Json(serde_json::json!({ "embeddings": [[0.1_f32, 0.2, 0.3]] }))
+                },
+            ),
+        )
+        .with_state(hit.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.local_ai.base_url = Some(base.clone());
+
+    let provider =
+        create_embedding_provider_with_config(&config, "ollama", "nomic-embed-text", 3, "", None)
+            .expect("ollama provider builds with a config base_url");
+
+    let vectors = provider
+        .embed(&["binding probe"])
+        .await
+        .expect("factory-built ollama embedder must reach the config base_url");
+    assert_eq!(vectors.first().map(|v| v.len()).unwrap_or(0), 3);
+    assert!(
+        *hit.count.lock().unwrap() >= 1,
+        "embed must hit the configured local_ai.base_url, proving the ollama arm is config-aware"
+    );
+}
+
 /// Non-managed providers delegate unchanged to the credentialed factory —
 /// the config scope has no effect on BYO-key / local providers.
 #[test]
@@ -118,6 +208,79 @@ fn config_aware_factory_delegates_non_managed() {
         create_embedding_provider_with_config(&config, "nope", "m", 1, "", None).is_err(),
         "unknown provider must error through the delegated factory"
     );
+}
+
+#[test]
+fn default_embedder_falls_back_to_cloud_when_configured_provider_fails() {
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.memory.embedding_provider = "not-a-provider".into();
+
+    let provider = default_embedding_provider_with_config(&config);
+    assert_eq!(
+        provider.name(),
+        "cloud",
+        "a provider construction failure must fall back to the managed cloud embedder"
+    );
+}
+
+#[test]
+fn custom_endpoint_validation_rejects_blank_and_credentialed_remote_http() {
+    assert!(validate_custom_endpoint("   ", false).is_err());
+    assert!(validate_custom_endpoint("not-a-url", false).is_err());
+    assert!(validate_custom_endpoint("ftp://embedding.example", false).is_err());
+    assert!(validate_custom_endpoint("http://embedding.example", false).is_ok());
+    assert!(validate_custom_endpoint("http://embedding.example", true).is_err());
+    assert!(validate_custom_endpoint("http://localhost:1234/", true).is_ok());
+    assert_eq!(
+        validate_custom_endpoint(" https://embedding.example/v1/ ", true).unwrap(),
+        "https://embedding.example/v1"
+    );
+}
+
+#[tokio::test]
+async fn default_embedder_honors_configured_local_provider() {
+    use std::sync::{Arc, Mutex};
+
+    use axum::{extract::State, routing::post, Json, Router};
+
+    #[derive(Clone, Default)]
+    struct Hit {
+        count: Arc<Mutex<usize>>,
+    }
+    let hit = Hit::default();
+    let app = Router::new()
+        .route(
+            "/api/embed",
+            post(
+                |State(h): State<Hit>, Json(_body): Json<serde_json::Value>| async move {
+                    *h.count.lock().unwrap() += 1;
+                    Json(serde_json::json!({ "embeddings": [[0.1_f32, 0.2, 0.3]] }))
+                },
+            ),
+        )
+        .with_state(hit.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let tmp = TempDir::new().unwrap();
+    let mut config = test_config(&tmp);
+    config.memory.embedding_provider = "ollama".into();
+    config.memory.embedding_model = "bge-m3".into();
+    config.memory.embedding_dimensions = 3;
+    config.local_ai.base_url = Some(base);
+
+    let provider = default_embedding_provider_with_config(&config);
+    assert_eq!(provider.name(), "ollama");
+    assert_eq!(provider.model_id(), "bge-m3");
+    assert_eq!(provider.dimensions(), 3);
+    let vectors = provider
+        .embed(&["default factory endpoint probe"])
+        .await
+        .expect("default factory must reach the configured Ollama endpoint");
+    assert_eq!(vectors.first().map(|v| v.len()), Some(3));
+    assert_eq!(*hit.count.lock().unwrap(), 1);
 }
 
 /// End-to-end binding proof (#5356): a provider built **through
