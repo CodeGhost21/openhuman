@@ -24,7 +24,17 @@ fn child_path_prepends_cli_dir_and_keeps_inherited_entries() {
     let _env = super::super::ENV_TEST_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let prev = std::env::var_os("PATH");
+    struct PathRestore(Option<std::ffi::OsString>);
+    impl Drop for PathRestore {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    let _restore = PathRestore(std::env::var_os("PATH"));
     let inherited = std::env::join_paths([
         std::path::Path::new("/usr/bin"),
         std::path::Path::new("/bin"),
@@ -54,11 +64,6 @@ fn child_path_prepends_cli_dir_and_keeps_inherited_entries() {
         "CLI dir must come before inherited /usr/bin"
     );
     assert!(!dirs.iter().any(|p| p.as_os_str().is_empty()));
-
-    match prev {
-        Some(v) => std::env::set_var("PATH", v),
-        None => std::env::remove_var("PATH"),
-    }
 }
 
 #[test]
