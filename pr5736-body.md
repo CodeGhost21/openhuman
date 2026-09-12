@@ -27,7 +27,7 @@ A macOS app launched from Finder/Dock inherits `PATH=/usr/bin:/bin:/usr/sbin:/sb
 
 ## Impact
 
-- Desktop macOS: Finder/Dock launches now work with the claude-code provider. No behavior change for terminal launches, Linux, or Windows (the fallback list simply never matches there unless those paths exist).
+- Desktop macOS, Linux, and Windows: CLI fallback resolution and child PATH construction now include user and Homebrew/npm locations; Finder/Dock launches are the motivating case.
 
 ## Related
 
@@ -53,7 +53,7 @@ A macOS app launched from Finder/Dock inherits `PATH=/usr/bin:/bin:/usr/sbin:/sb
 - [x] `pnpm --filter openhuman-app format:check` — N/A: Rust-only change
 - [x] `pnpm typecheck` — N/A: Rust-only change
 - [x] Focused tests: `cargo test --lib inference::provider::claude_code` — all pass
-- [x] Rust fmt/check (if changed): `cargo check --lib` clean on this branch over `main`
+- [x] Rust fmt/check (if changed): `cargo fmt --all -- --check` and `cargo check --lib` pass
 - [x] Tauri fmt/check (if changed): N/A
 
 ### Validation Blocked
@@ -96,4 +96,3 @@ https://claude.ai/code/session_01UMNxXS5ucxpzNoHnuhyQPu
   - Improved authentication status checks when Claude is launched outside a terminal.
   - Claude operations now use a five-minute timeout.
 <!-- end of auto-generated comment: release notes by coderabbit.ai -->
-
