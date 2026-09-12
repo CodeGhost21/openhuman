@@ -158,6 +158,7 @@ const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelPr
     const trimmed = apiKey.trim();
     setSaving(true);
     setSaveError(null);
+    setSaveStatus('idle');
     try {
       if (mode === 'direct' && trimmed.length > 0) {
         // [composio-direct] persist new key + flip mode to direct.
