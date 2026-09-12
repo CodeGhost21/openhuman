@@ -18,10 +18,31 @@ use tokio::sync::mpsc;
 /// infinite loop, MCP deadlock) we kill the child and surface a timeout.
 const TURN_TIMEOUT: Duration = Duration::from_secs(300);
 
+fn parse_error_line_shape(line: &str) -> &'static str {
+    match line.trim_start().chars().next() {
+        Some('{') => "json object",
+        Some('[') => "json array",
+        Some('"') => "json string",
+        Some(_) => "non-json",
+        None => "blank",
+    }
+}
+
+fn parse_error_log_line(ev: &ClaudeCodeEvent) -> Option<String> {
+    let ClaudeCodeEvent::ParseError { line, reason } = ev else {
+        return None;
+    };
+    Some(format!(
+        "[claude-code][driver] dropping unparsable stream line ({reason}): {} of {} bytes",
+        parse_error_line_shape(line),
+        line.len()
+    ))
+}
+
 use super::event_mapper::EventMapper;
 use super::input_builder::build_stdin;
 use super::session_store::{generate_uuid_v4, is_uuid_v4, SessionStore};
-use super::stream_parser::StreamJsonParser;
+use super::stream_parser::{ClaudeCodeEvent, StreamJsonParser};
 use crate::openhuman::agent::messages::ChatMessage;
 use crate::openhuman::inference::provider::types::{ChatResponse, ProviderDelta};
 
@@ -475,6 +496,9 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
                 break;
             }
             for ev in parser.feed_bytes(&buf[..n]) {
+                if let Some(msg) = parse_error_log_line(&ev) {
+                    log::warn!("{msg}");
+                }
                 for delta in mapper.handle(ev) {
                     if let Some(tx) = ctx.stream {
                         let _ = tx.send(delta).await;
@@ -483,6 +507,9 @@ pub async fn run_turn(ctx: TurnContext<'_>) -> anyhow::Result<ChatResponse> {
             }
         }
         for ev in parser.end() {
+            if let Some(msg) = parse_error_log_line(&ev) {
+                log::warn!("{msg}");
+            }
             for delta in mapper.handle(ev) {
                 if let Some(tx) = ctx.stream {
                     let _ = tx.send(delta).await;
