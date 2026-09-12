@@ -23,9 +23,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 
 use crate::openhuman::agent::messages::ChatMessage;
-use crate::openhuman::agent::multimodal::{
-    managed_attachment_path, rehydrate_image_placeholders,
-};
+use crate::openhuman::agent::multimodal::{managed_attachment_path, rehydrate_image_placeholders};
 
 /// Build the bytes to write to claude's stdin. Returns an empty `Vec`
 /// when there is nothing to send (caller should abort).
