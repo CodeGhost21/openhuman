@@ -486,9 +486,17 @@ impl Tool for DeploymentLogsTool {
         };
         let limit = args
             .get("limit")
-            .and_then(Value::as_u64)
-            .unwrap_or(100)
-            .clamp(1, 1000) as usize;
+            .map_or(100, |value| {
+                value
+                    .as_i64()
+                    .map(|value| value.clamp(1, 1000) as usize)
+                    .or_else(|| {
+                        value
+                            .as_u64()
+                            .map(|value| value.clamp(1, 1000) as usize)
+                    })
+                    .unwrap_or(100)
+            });
 
         match self.host.deployment_logs(&id).await {
             Ok(logs) => {

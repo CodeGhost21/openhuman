@@ -586,6 +586,33 @@ async fn a_limited_log_read_keeps_the_end_where_the_failure_is() {
     assert_eq!(rows[2]["message"], "line 9", "{logs}");
 }
 
+#[tokio::test]
+async fn a_negative_log_limit_is_clamped_to_one() {
+    let server = MockServer::start().await;
+
+    let events: Vec<serde_json::Value> = (0..3)
+        .map(|n| json!({"created": n, "type": "stdout", "payload": format!("line {n}")}))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/v3/deployments/dpl_negative_limit/events"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"events": events})))
+        .mount(&server)
+        .await;
+
+    let result = tools::DeploymentLogsTool::new(host_against(&server))
+        .execute(json!({"deployment_id": "dpl_negative_limit", "limit": -1}))
+        .await
+        .expect("the tool reports rather than panics");
+
+    assert!(!result.is_error, "{result:?}");
+    let logs: serde_json::Value =
+        serde_json::from_str(&result.text()).expect("the tool answers with JSON");
+    let rows = logs.as_array().expect("an array of events");
+
+    assert_eq!(rows.len(), 1, "{logs}");
+    assert_eq!(rows[0]["message"], "line 2", "{logs}");
+}
+
 /// A read tool that calls out before checking its arguments turns a model's
 /// omission into a provider request.
 #[tokio::test]
