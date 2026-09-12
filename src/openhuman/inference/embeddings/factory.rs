@@ -177,9 +177,13 @@ fn validate_custom_endpoint(endpoint: &str, has_credentials: bool) -> anyhow::Re
         anyhow::bail!("custom embedding provider endpoint must not be empty");
     }
 
+    let parsed = reqwest::Url::parse(endpoint)
+        .map_err(|_| anyhow::anyhow!("custom embedding provider endpoint is invalid"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        anyhow::bail!("custom embedding provider endpoint must use HTTP or HTTPS");
+    }
+
     if has_credentials {
-        let parsed = reqwest::Url::parse(endpoint)
-            .map_err(|_| anyhow::anyhow!("custom embedding provider endpoint is invalid"))?;
         let loopback = parsed
             .host()
             .map(|host| match host {

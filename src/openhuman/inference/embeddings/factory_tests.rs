@@ -227,6 +227,9 @@ fn default_embedder_falls_back_to_cloud_when_configured_provider_fails() {
 #[test]
 fn custom_endpoint_validation_rejects_blank_and_credentialed_remote_http() {
     assert!(validate_custom_endpoint("   ", false).is_err());
+    assert!(validate_custom_endpoint("not-a-url", false).is_err());
+    assert!(validate_custom_endpoint("ftp://embedding.example", false).is_err());
+    assert!(validate_custom_endpoint("http://embedding.example", false).is_ok());
     assert!(validate_custom_endpoint("http://embedding.example", true).is_err());
     assert!(validate_custom_endpoint("http://localhost:1234/", true).is_ok());
     assert_eq!(
