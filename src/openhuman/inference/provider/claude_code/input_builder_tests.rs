@@ -194,3 +194,37 @@ fn unmanaged_and_unreadable_images_degrade_without_reading_paths() {
     assert!(s.contains("before ") && s.contains(" after"));
     assert_eq!(s.matches("an attached image could not be read").count(), 2);
 }
+
+#[test]
+fn invalid_inline_images_use_the_text_fallback() {
+    assert!(image_block("data:image/svg+xml;base64,PHN2Zz4=").is_none());
+    assert!(image_block("data:image/png;base64,not-base64").is_none());
+    assert!(image_block("data:image/png,%ZZ").is_none());
+}
+
+#[test]
+fn image_count_is_capped_at_sixteen() {
+    let marker = "[IMAGE:data:image/png;base64,QQ==]";
+    let raw = std::iter::repeat_n(marker, 17).collect::<String>();
+    let blocks = content_blocks(&raw);
+    assert_eq!(
+        blocks
+            .iter()
+            .filter(|block| block["type"] == "image")
+            .count(),
+        16
+    );
+    assert_eq!(
+        blocks
+            .iter()
+            .filter(|block| block["text"] == "[an attached image could not be read]")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn oversized_inline_images_use_the_text_fallback() {
+    let payload = "A".repeat(20 * 1024 * 1024 + 1);
+    assert!(image_block(&format!("data:image/png;base64,{payload}")).is_none());
+}
