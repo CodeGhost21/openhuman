@@ -50,11 +50,11 @@ A macOS app launched from Finder/Dock inherits `PATH=/usr/bin:/bin:/usr/sbin:/sb
 
 ### Validation Run
 
-- [ ] `pnpm --filter openhuman-app format:check` — N/A: Rust-only change
-- [ ] `pnpm typecheck` — N/A: Rust-only change
+- [x] `pnpm --filter openhuman-app format:check` — N/A: Rust-only change
+- [x] `pnpm typecheck` — N/A: Rust-only change
 - [x] Focused tests: `cargo test --lib inference::provider::claude_code` — all pass
 - [x] Rust fmt/check (if changed): `cargo check --lib` clean on this branch over `main`
-- [ ] Tauri fmt/check (if changed): N/A
+- [x] Tauri fmt/check (if changed): N/A
 
 ### Validation Blocked
 
@@ -96,4 +96,3 @@ https://claude.ai/code/session_01UMNxXS5ucxpzNoHnuhyQPu
   - Improved authentication status checks when Claude is launched outside a terminal.
   - Claude operations now use a five-minute timeout.
 <!-- end of auto-generated comment: release notes by coderabbit.ai -->
-
