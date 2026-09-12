@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import {
   bootRuntimeReadyGuestPage,
+  callCoreRpc,
   dismissWalkthroughIfPresent,
   signInViaCallbackToken,
   waitForAppReady,
@@ -78,7 +79,15 @@ test.describe('Embeddings setup — Test connection for a custom endpoint', () =
     // and no unavailable-reason text is shown for a non-custom provider.
     await openEmbeddingsTab(page, 'pw-embed-openai');
 
-    await page.getByRole('radio').filter({ hasText: /OpenAI/ }).first().click();
+    // Scoped to an exact label descendant, not `hasText: /OpenAI/`: the radios
+    // carry a label AND a description, so a substring match also hits
+    // "Custom (OpenAI-compatible)" and `.first()` then depends on catalog
+    // order — the test would silently assert against the custom provider,
+    // which is the very case the sibling test covers.
+    await page
+      .getByRole('radio')
+      .filter({ has: page.getByText('OpenAI', { exact: true }) })
+      .click();
 
     const testButton = page.getByRole('button', { name: TEST_CONNECTION });
     await expect(testButton).toBeVisible({ timeout: 15_000 });
@@ -94,5 +103,63 @@ test.describe('Embeddings setup — Test connection for a custom endpoint', () =
     await expect(keyField).toBeVisible();
     await keyField.fill('sk-not-a-real-key-0000000000');
     await expect(testButton).toBeEnabled();
+  });
+
+  test('reopens and retains a configured custom profile after embeddings are disabled', async ({
+    page,
+  }) => {
+    await openEmbeddingsTab(page, 'pw-embed-custom-reopen');
+
+    const mockPort = process.env.E2E_MOCK_PORT || '18473';
+    const endpoint = `http://127.0.0.1:${mockPort}/openai/v1`;
+    await callCoreRpc('openhuman.embeddings_update_settings', {
+      provider: 'custom',
+      custom_endpoint: endpoint,
+      model: 'e2e-custom-embedding',
+      dimensions: 1024,
+      confirm_wipe: true,
+    });
+
+    await page.reload();
+    await waitForAppReady(page);
+    await dismissWalkthroughIfPresent(page);
+
+    const customOption = page.getByRole('radio').filter({ hasText: CUSTOM_LABEL });
+    await expect(customOption).toHaveAttribute('aria-checked', 'true');
+    await customOption.click();
+
+    const endpointField = page.getByPlaceholder('https://your-endpoint.com/v1');
+    const modelField = page.getByPlaceholder('text-embedding-3-small');
+    const dimensionsField = page.getByRole('spinbutton');
+    await expect(endpointField).toHaveValue(endpoint);
+    await expect(modelField).toHaveValue('e2e-custom-embedding');
+    await expect(dimensionsField).toHaveValue('4');
+
+    await page.getByRole('button', { name: /^Cancel$/ }).click();
+    await page
+      .getByRole('radio')
+      .filter({ hasText: /Disabled/ })
+      .click();
+    await expect
+      .poll(async () => {
+        const response = await callCoreRpc<{ result?: { provider?: string }; provider?: string }>(
+          'openhuman.embeddings_get_settings'
+        );
+        return response.result?.provider ?? response.provider;
+      })
+      .toBe('none');
+
+    // A real page reload proves this is retained by the core rather than only
+    // surviving in the current React component's local state.
+    await page.reload();
+    await waitForAppReady(page);
+    await dismissWalkthroughIfPresent(page);
+    await page.getByRole('radio').filter({ hasText: CUSTOM_LABEL }).click();
+
+    await expect(page.getByPlaceholder('https://your-endpoint.com/v1')).toHaveValue(endpoint);
+    await expect(page.getByPlaceholder('text-embedding-3-small')).toHaveValue(
+      'e2e-custom-embedding'
+    );
+    await expect(page.getByRole('spinbutton')).toHaveValue('4');
   });
 });
