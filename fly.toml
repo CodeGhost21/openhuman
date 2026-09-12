@@ -8,6 +8,12 @@ primary_region = 'iad'
 
 [build]
 
+[env]
+  OPENHUMAN_CORE_HOST = '0.0.0.0'
+  OPENHUMAN_CORE_PORT = '7788'
+  OPENHUMAN_WORKSPACE = '/home/openhuman/.openhuman'
+  RUST_LOG = 'info'
+
 [http_service]
   internal_port = 7788
   force_https = true
