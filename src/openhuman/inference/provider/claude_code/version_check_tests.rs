@@ -58,7 +58,10 @@ fn first_existing_skips_non_executable_files() {
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
         .expect("set permissions");
 
-    assert_eq!(first_existing(&[non_executable, executable.clone()]), Some(executable));
+    assert_eq!(
+        first_existing(&[non_executable, executable.clone()]),
+        Some(executable)
+    );
 }
 
 #[test]
