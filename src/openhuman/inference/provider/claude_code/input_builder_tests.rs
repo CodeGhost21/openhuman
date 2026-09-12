@@ -164,9 +164,9 @@ fn percent_encoded_data_uri_emits_an_image_block() {
 
 #[test]
 fn readable_managed_image_file_emits_an_image_block() {
-    let dir = tempfile::tempdir().unwrap();
-    crate::openhuman::agent::multimodal::init_attachments_dir(dir.path().to_path_buf());
-    let path = dir.path().join("sample.png");
+    let dir = crate::openhuman::agent::multimodal::managed_attachments_dir_for_tests();
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("input-builder-test-{}.png", std::process::id()));
     std::fs::write(&path, b"PNG").unwrap();
     let s = String::from_utf8(build_stdin(
         &[msg("user", &format!("file [IMAGE:{}]", path.display()))],
@@ -178,6 +178,7 @@ fn readable_managed_image_file_emits_an_image_block() {
     assert!(content.len() >= 2, "expected text and image blocks: {s}");
     assert_eq!(content[1]["type"], "image");
     assert_eq!(content[1]["source"]["data"], "UE5H");
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]

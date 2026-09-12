@@ -599,6 +599,11 @@ pub fn is_managed_attachment_path(path: &str) -> bool {
     candidate.starts_with(root)
 }
 
+#[cfg(test)]
+pub(crate) fn managed_attachments_dir_for_tests() -> PathBuf {
+    attachments_dir()
+}
+
 /// Per-user fallback attachments dir used only when [`init_attachments_dir`]
 /// was never called. Uses the OS user cache dir (e.g. `~/Library/Caches/…`,
 /// `~/.cache/…`) so persisted image bytes aren't dropped into a world-readable

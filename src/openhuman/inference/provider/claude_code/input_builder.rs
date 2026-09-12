@@ -80,8 +80,10 @@ fn user_row(text: &str) -> Value {
 }
 
 fn content_blocks(raw: &str) -> Vec<Value> {
+    const MAX_IMAGES_PER_MESSAGE: usize = 16;
     let mut blocks = Vec::new();
     let mut cursor = 0;
+    let mut image_count = 0;
     while let Some(relative) = raw[cursor..].find("[IMAGE:") {
         let start = cursor + relative;
         if start > cursor {
@@ -94,7 +96,13 @@ fn content_blocks(raw: &str) -> Vec<Value> {
         };
         let end = start + end_relative + 1;
         let reference = &raw[start + 7..end - 1];
-        blocks.push(image_block(reference).unwrap_or_else(|| {
+        let block = if image_count < MAX_IMAGES_PER_MESSAGE {
+            image_count += 1;
+            image_block(reference)
+        } else {
+            None
+        };
+        blocks.push(block.unwrap_or_else(|| {
             json!({
                 "type":"text", "text":"[an attached image could not be read]"
             })
