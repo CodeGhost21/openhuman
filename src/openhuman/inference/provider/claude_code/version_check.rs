@@ -108,7 +108,11 @@ pub fn probe() -> CliStatus {
     };
     let path_str = path.display().to_string();
 
-    let output = match Command::new(&path).arg("--version").output() {
+    let output = match Command::new(&path)
+        .arg("--version")
+        .env("PATH", super::driver::child_path_with_user_bins(&path))
+        .output()
+    {
         Ok(o) => o,
         Err(e) => {
             log::warn!("[claude-code][version] spawn failed path={path_str} err={e}");
@@ -182,60 +186,5 @@ fn parts(v: &str) -> (u32, u32, u32) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_typical_output() {
-        assert_eq!(
-            parse_version("2.0.4 (Claude Code)\n").as_deref(),
-            Some("2.0.4")
-        );
-    }
-
-    #[test]
-    fn rejects_non_numeric_prefix() {
-        assert_eq!(parse_version("claude version 2.0.4"), None);
-    }
-
-    #[test]
-    fn version_compare() {
-        assert!(version_lt("1.9.9", "2.0.0"));
-        assert!(version_lt("2.0.0", "2.0.1"));
-        assert!(!version_lt("2.0.0", "2.0.0"));
-        assert!(!version_lt("2.1.0", "2.0.9"));
-    }
-
-    #[test]
-    fn version_compare_strips_prerelease() {
-        assert!(!version_lt("2.0.0-rc.1", "2.0.0"));
-    }
-
-    #[test]
-    fn first_existing_picks_the_first_real_file() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let missing_a = dir.path().join("nope-a/claude");
-        let missing_b = dir.path().join("nope-b/claude");
-        let real = dir.path().join("claude");
-        std::fs::write(&real, b"#!/bin/sh\n").expect("write fake binary");
-
-        // Nothing present → None (the "CLI not installed" path).
-        assert_eq!(first_existing(&[missing_a.clone(), missing_b.clone()]), None);
-        // Skips the absent candidates and returns the first file that exists.
-        assert_eq!(
-            first_existing(&[missing_a, missing_b, real.clone()]),
-            Some(real)
-        );
-    }
-
-    #[test]
-    fn well_known_candidates_lead_with_native_installer_path() {
-        // The native installer default (`~/.local/bin/claude`) is the one a
-        // stripped launchd PATH omits, so it must be the first fallback tried.
-        let candidates = well_known_candidates();
-        assert!(!candidates.is_empty());
-        if let Some(home) = dirs::home_dir() {
-            assert_eq!(candidates[0], home.join(".local/bin/claude"));
-        }
-    }
-}
+#[path = "version_check_tests.rs"]
+mod tests;
