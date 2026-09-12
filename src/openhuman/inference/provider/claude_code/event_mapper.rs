@@ -180,36 +180,20 @@ impl EventMapper {
                     .and_then(Value::as_str)
                     .filter(|s| !s.is_empty())
                     .map(str::to_string);
-                let call_id = block
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string);
                 if let Some(name) = tool_name.as_deref() {
                     log::debug!(
                         "[claude-code][event-mapper] CLI self-executed tool `{name}` (not surfaced to the harness)"
                     );
                 }
-                if call_id.is_none() || tool_name.is_none() {
-                    log::warn!(
-                        "[claude-code][event-mapper] skipping tool_use block with missing id or name"
-                    );
-                    return Vec::new();
-                }
-                let call_id = call_id.unwrap();
-                let tool_name = tool_name.unwrap();
                 // The block is tracked so its `input_json_delta`s and its stop
                 // event are swallowed rather than leaking, but it is NOT
                 // surfaced to OpenHuman's harness — see the note on
                 // `on_block_stop`.
-                log::debug!(
-                    "[claude-code][event-mapper] cli-internal tool_use name={tool_name} id={call_id} (not surfaced)"
-                );
                 self.blocks.insert(
                     index,
                     BlockState {
                         kind: BlockKind::Tool,
-                        tool_name: Some(tool_name),
+                        tool_name,
                         text_accum: String::new(),
                     },
                 );
