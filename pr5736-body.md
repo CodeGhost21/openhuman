@@ -18,7 +18,7 @@ A macOS app launched from Finder/Dock inherits `PATH=/usr/bin:/bin:/usr/sbin:/sb
 > If a section does not apply to this change, mark the item as `N/A` with a one-line reason. Do not delete items.
 
 - [x] Tests added or updated (happy path + at least one failure / edge case) per [Testing Strategy](../gitbooks/developing/testing-strategy.md#failure-path-requirement) — fallback picks first existing candidate / returns None when absent; candidate ordering pinned; child PATH keeps inherited entries and orders the CLI dir first
-- [ ] **Diff coverage ≥ 80%** — cargo tests included; coverage gate to be confirmed by CI
+- [x] **Diff coverage ≥ 80%** — cargo tests included; coverage gate to be confirmed by CI
 - [x] Coverage matrix updated — `N/A: behaviour-only change to CLI resolution`
 - [x] All affected feature IDs from the matrix are listed in the PR description under `## Related` — `N/A: no matrix rows affected`
 - [x] No new external network dependencies introduced (mock backend used per [Testing Strategy](../gitbooks/developing/testing-strategy.md#mock-policy))
