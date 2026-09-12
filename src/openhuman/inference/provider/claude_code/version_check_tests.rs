@@ -68,7 +68,8 @@ fn first_existing_skips_non_executable_files() {
 fn well_known_candidates_put_native_install_first() {
     let candidates = well_known_candidates();
     assert!(!candidates.is_empty());
-    if let Some(home) = dirs::home_dir() {
-        assert_eq!(candidates[0], home.join(".local/bin/claude"));
+    match dirs::home_dir() {
+        Some(home) => assert_eq!(candidates[0], home.join(".local/bin/claude")),
+        None => assert_eq!(candidates[0], std::path::Path::new("/usr/local/bin/claude")),
     }
 }

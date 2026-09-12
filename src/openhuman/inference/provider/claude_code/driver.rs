@@ -236,6 +236,7 @@ pub(crate) fn child_path_with_user_bins(claude_bin: &std::path::Path) -> std::ff
         prefix.push(home.join(".local/bin"));
         prefix.push(home.join("bin"));
     }
+    #[cfg(target_os = "macos")]
     prefix.push(PathBuf::from("/opt/homebrew/bin"));
     prefix.push(PathBuf::from("/usr/local/bin"));
 
