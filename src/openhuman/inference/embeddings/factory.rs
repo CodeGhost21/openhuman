@@ -399,21 +399,33 @@ fn managed_credential_scope(config: &Config) -> (Option<PathBuf>, bool) {
 /// connection" passed (config-scoped) while the embed batch silently failed
 /// (keyless scope) — #5501.
 pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn EmbeddingProvider> {
-    let provider = config.memory.embedding_provider.trim();
+    // Keep the stored value for credential lookup. Credentials are keyed by
+    // the provider value that settings persisted; trimming before lookup can
+    // select a different credential. Normalize only the construction input.
+    let stored_provider = config.memory.embedding_provider.as_str();
+    let provider = stored_provider.trim();
     if !provider.is_empty()
         && !provider.eq_ignore_ascii_case("cloud")
         && !provider.eq_ignore_ascii_case("managed")
     {
-        let api_key = super::rpc::resolve_api_key(config, provider);
+        let api_key = super::rpc::resolve_api_key(config, stored_provider);
+        let custom_endpoint = provider.strip_prefix("custom:");
+        let provider_slug = if custom_endpoint.is_some() {
+            "custom"
+        } else {
+            provider
+        };
+        let requires_key = matches!(provider_slug, "voyage" | "openai" | "cohere")
+            || (provider_slug == "custom" && custom_endpoint.is_none());
         match create_embedding_provider_with_config(
             config,
-            provider,
+            provider_slug,
             &config.memory.embedding_model,
             config.memory.embedding_dimensions,
             &api_key,
-            None,
+            custom_endpoint,
         ) {
-            Ok(provider) => return Arc::from(provider),
+            Ok(provider) if !requires_key || !api_key.is_empty() => return Arc::from(provider),
             Err(_) => {
                 let kind = match provider {
                     "voyage" | "openai" | "cohere" | "ollama" | "none" => provider,
@@ -422,6 +434,11 @@ pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn Embedd
                 };
                 log::warn!(
                     "[embeddings::factory] configured embedding provider failed to build (kind={kind}); falling back to managed cloud embedder"
+                );
+            }
+            Ok(_) => {
+                log::warn!(
+                    "[embeddings::factory] configured embedding provider has no stored credential (kind={provider_slug}); falling back to managed cloud embedder"
                 );
             }
         }
