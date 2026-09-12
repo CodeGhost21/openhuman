@@ -65,8 +65,10 @@ fn factory_custom_url() {
 
 #[test]
 fn factory_custom_empty_url() {
-    let error = create_embedding_provider("custom:", "model", 768)
-        .expect_err("an empty custom endpoint must be rejected before construction");
+    let error = match create_embedding_provider("custom:", "model", 768) {
+        Ok(_) => panic!("an empty custom endpoint must be rejected before construction"),
+        Err(error) => error,
+    };
     assert!(error.to_string().contains("must not be empty"));
 }
 
