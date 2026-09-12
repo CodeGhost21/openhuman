@@ -151,10 +151,15 @@ fn percent_encoded_data_uri_emits_an_image_block() {
     ))
     .unwrap();
     let row: Value = serde_json::from_str(s.lines().next().unwrap()).unwrap();
-    let block = &row["message"]["content"][1];
+    let content = row["message"]["content"].as_array().unwrap();
+    assert!(content.len() >= 2, "expected text and image blocks: {s}");
+    let block = &content[1];
     assert_eq!(block["type"], "image");
     assert_eq!(block["source"]["media_type"], "image/png");
-    assert_eq!(block["source"]["data"], "iVBORw0K");
+    assert_eq!(
+        block["source"]["data"],
+        base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n")
+    );
 }
 
 #[test]
@@ -169,8 +174,10 @@ fn readable_managed_image_file_emits_an_image_block() {
     ))
     .unwrap();
     let row: Value = serde_json::from_str(s.lines().next().unwrap()).unwrap();
-    assert_eq!(row["message"]["content"][1]["type"], "image");
-    assert_eq!(row["message"]["content"][1]["source"]["data"], "UE5H");
+    let content = row["message"]["content"].as_array().unwrap();
+    assert!(content.len() >= 2, "expected text and image blocks: {s}");
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[1]["source"]["data"], "UE5H");
 }
 
 #[test]
