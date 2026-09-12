@@ -1,3 +1,4 @@
+use super::*;
 
 #[test]
 fn write_mcp_http_config_emits_http_url_with_bearer_header() {
@@ -282,5 +283,3 @@ fn the_shape_of_the_line_is_reported() {
     assert!(shape("panic: claude-code crashed").contains("non-json"));
     assert!(shape("   ").contains("blank"));
 }
-
-use super::*;

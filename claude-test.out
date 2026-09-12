@@ -29,3 +29,15 @@ warning: unused import: `super::*`
 287 | use super::*;
     |     ^^^^^^^^
 
+warning: unused import: `crate::openhuman::memory::Memory`
+ --> src/openhuman/channels/tests/memory.rs:9:5
+  |
+9 | use crate::openhuman::memory::Memory;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MemoryMaintenance`
+ --> src/openhuman/memory/guard/families_tests.rs:7:47
+  |
+7 | use crate::openhuman::memory::api::provider::{MemoryMaintenance, MemoryProvider, MemoryTree};
+  |                                               ^^^^^^^^^^^^^^^^^
+
