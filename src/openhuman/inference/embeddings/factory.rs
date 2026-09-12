@@ -444,9 +444,9 @@ pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn Embedd
         let api_key = super::rpc::resolve_api_key(config, provider_slug);
         let custom_endpoint = match raw_custom_endpoint {
             Some(endpoint) => validate_custom_endpoint(endpoint, !api_key.is_empty()).map(Some),
-            None if provider_slug == "custom" => {
-                Err(anyhow::anyhow!("custom embedding provider endpoint is missing"))
-            }
+            None if provider_slug == "custom" => Err(anyhow::anyhow!(
+                "custom embedding provider endpoint is missing"
+            )),
             None => Ok(None),
         };
         let requires_key = matches!(provider_slug, "voyage" | "openai" | "cohere")
@@ -460,9 +460,7 @@ pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn Embedd
                 &api_key,
                 custom_endpoint.as_deref(),
             ) {
-                Ok(provider) if !requires_key || !api_key.is_empty() => {
-                    return Arc::from(provider)
-                }
+                Ok(provider) if !requires_key || !api_key.is_empty() => return Arc::from(provider),
                 Err(_) => {
                     let kind = match provider {
                         "voyage" | "openai" | "cohere" | "ollama" | "none" => provider,
