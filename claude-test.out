@@ -119,3 +119,15 @@ error[E0425]: cannot find function `parse_error_log_line` in this scope
 275 |         parse_error_log_line(&ClaudeCodeEvent::ParseError {
     |         ^^^^^^^^^^^^^^^^^^^^ not found in this scope
 
+warning: unused import: `crate::openhuman::memory::Memory`
+ --> src/openhuman/channels/tests/memory.rs:9:5
+  |
+9 | use crate::openhuman::memory::Memory;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MemoryMaintenance`
+ --> src/openhuman/memory/guard/families_tests.rs:7:47
+  |
+7 | use crate::openhuman::memory::api::provider::{MemoryMaintenance, MemoryProvider, MemoryTree};
+  |                                               ^^^^^^^^^^^^^^^^^
+
