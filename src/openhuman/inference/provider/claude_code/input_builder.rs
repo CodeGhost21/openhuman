@@ -119,7 +119,7 @@ fn content_blocks(raw: &str) -> Vec<Value> {
 fn image_block(reference: &str) -> Option<Value> {
     let (media_type, data) = if let Some(rest) = reference.strip_prefix("data:") {
         let (metadata, payload) = rest.split_once(',')?;
-        let mime = metadata.split(';').next()?.to_string();
+        let mime = metadata.split(';').next()?.to_ascii_lowercase();
         if !matches!(
             mime.to_ascii_lowercase().as_str(),
             "image/png" | "image/jpeg" | "image/gif" | "image/webp"
@@ -145,11 +145,10 @@ fn image_block(reference: &str) -> Option<Value> {
         (mime, encoded)
     } else {
         let path = managed_attachment_path(reference)?;
-        let metadata = std::fs::metadata(&path).ok()?;
-        if metadata.len() > 20 * 1024 * 1024 {
+        let bytes = std::fs::read(&path).ok()?;
+        if bytes.len() > 20 * 1024 * 1024 {
             return None;
         }
-        let bytes = std::fs::read(&path).ok()?;
         let lower = path.to_string_lossy().to_ascii_lowercase();
         let mime = if lower.ends_with(".png") {
             "image/png"
