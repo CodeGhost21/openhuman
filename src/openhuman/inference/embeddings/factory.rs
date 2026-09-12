@@ -460,7 +460,14 @@ pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn Embedd
                 &api_key,
                 custom_endpoint.as_deref(),
             ) {
-                Ok(provider) if !requires_key || !api_key.is_empty() => return Arc::from(provider),
+                Ok(provider) => {
+                    if !requires_key || !api_key.is_empty() {
+                        return Arc::from(provider);
+                    }
+                    log::warn!(
+                        "[embeddings::factory] configured embedding provider has no stored credential (kind={provider_slug}); falling back to managed cloud embedder"
+                    );
+                }
                 Err(_) => {
                     let kind = match provider {
                         "voyage" | "openai" | "cohere" | "ollama" | "none" => provider,
@@ -469,11 +476,6 @@ pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn Embedd
                     };
                     log::warn!(
                         "[embeddings::factory] configured embedding provider failed to build (kind={kind}); falling back to managed cloud embedder"
-                    );
-                }
-                Ok(_) => {
-                    log::warn!(
-                        "[embeddings::factory] configured embedding provider has no stored credential (kind={provider_slug}); falling back to managed cloud embedder"
                     );
                 }
             }
