@@ -33,14 +33,17 @@ fn custom_openai_provider(
     api_key: &str,
     model: &str,
     dims: usize,
-) -> Box<dyn EmbeddingProvider> {
+) -> anyhow::Result<Box<dyn EmbeddingProvider>> {
+    let base_url = validate_custom_endpoint(base_url, !api_key.is_empty())?;
     if dims == 0 {
-        Box::new(DimensionAgnosticOpenAiProbe::new(
-            openai_model(base_url, api_key, model, 0, false),
+        Ok(Box::new(DimensionAgnosticOpenAiProbe::new(
+            openai_model(&base_url, api_key, model, 0, false),
             api_key,
-        ))
+        )))
     } else {
-        TinyAgentsEmbeddingProvider::boxed(openai_model(base_url, api_key, model, dims, false))
+        Ok(TinyAgentsEmbeddingProvider::boxed(openai_model(
+            &base_url, api_key, model, dims, false,
+        )))
     }
 }
 
@@ -274,7 +277,7 @@ pub fn create_embedding_provider(
         )),
         name if name.starts_with("custom:") => {
             let base_url = name.strip_prefix("custom:").unwrap_or("");
-            Ok(custom_openai_provider(base_url, "", model, dims))
+            custom_openai_provider(base_url, "", model, dims)
         }
         "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(
@@ -328,11 +331,11 @@ pub fn create_embedding_provider_with_credentials(
         )),
         "custom" => {
             let url = custom_endpoint.unwrap_or("");
-            Ok(custom_openai_provider(url, api_key, model, dims))
+            custom_openai_provider(url, api_key, model, dims)
         }
         name if name.starts_with("custom:") => {
             let url = custom_endpoint.unwrap_or_else(|| name.strip_prefix("custom:").unwrap_or(""));
-            Ok(custom_openai_provider(url, api_key, model, dims))
+            custom_openai_provider(url, api_key, model, dims)
         }
         "none" => Ok(TinyAgentsEmbeddingProvider::boxed(NoopEmbeddingModel)),
         unknown => Err(anyhow::anyhow!(
