@@ -25,3 +25,23 @@ fn version_compare() {
 fn version_compare_strips_prerelease() {
     assert!(!version_lt("2.0.0-rc.1", "2.0.0"));
 }
+
+#[test]
+fn first_existing_skips_missing_candidates_and_returns_first_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let missing = dir.path().join("missing/claude");
+    let real = dir.path().join("claude");
+    std::fs::write(&real, b"#!/bin/sh\n").expect("write fake binary");
+
+    assert_eq!(first_existing(std::slice::from_ref(&missing)), None);
+    assert_eq!(first_existing(&[missing, real.clone()]), Some(real));
+}
+
+#[test]
+fn well_known_candidates_put_native_install_first() {
+    let candidates = well_known_candidates();
+    assert!(!candidates.is_empty());
+    if let Some(home) = dirs::home_dir() {
+        assert_eq!(candidates[0], home.join(".local/bin/claude"));
+    }
+}
