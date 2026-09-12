@@ -71,9 +71,15 @@ fn cli_internal_tool_blocks_without_metadata_are_still_suppressed() {
     });
     let stop = json!({"type": "content_block_stop", "index": 1});
 
-    assert!(m.handle(ClaudeCodeEvent::StreamEvent { event: start }).is_empty());
-    assert!(m.handle(ClaudeCodeEvent::StreamEvent { event: args }).is_empty());
-    assert!(m.handle(ClaudeCodeEvent::StreamEvent { event: stop }).is_empty());
+    assert!(m
+        .handle(ClaudeCodeEvent::StreamEvent { event: start })
+        .is_empty());
+    assert!(m
+        .handle(ClaudeCodeEvent::StreamEvent { event: args })
+        .is_empty());
+    assert!(m
+        .handle(ClaudeCodeEvent::StreamEvent { event: stop })
+        .is_empty());
     assert!(m.tool_calls.is_empty());
 }
 
