@@ -170,6 +170,34 @@ fn openai_model(
         .with_required_api_key(required_key)
 }
 
+/// Validate a custom endpoint before a provider can send credentials to it.
+fn validate_custom_endpoint(endpoint: &str, has_credentials: bool) -> anyhow::Result<String> {
+    let endpoint = endpoint.trim().trim_end_matches('/');
+    if endpoint.is_empty() {
+        anyhow::bail!("custom embedding provider endpoint must not be empty");
+    }
+
+    if has_credentials {
+        let parsed = reqwest::Url::parse(endpoint)
+            .map_err(|_| anyhow::anyhow!("custom embedding provider endpoint is invalid"))?;
+        let loopback = parsed
+            .host()
+            .map(|host| match host {
+                url::Host::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
+                url::Host::Ipv4(address) => address.is_loopback(),
+                url::Host::Ipv6(address) => address.is_loopback(),
+            })
+            .unwrap_or(false);
+        if parsed.scheme() != "https" && !(parsed.scheme() == "http" && loopback) {
+            anyhow::bail!(
+                "credentialed custom embedding provider endpoints must use HTTPS or loopback HTTP"
+            );
+        }
+    }
+
+    Ok(endpoint.to_owned())
+}
+
 /// Whether to send the OpenAI `dimensions` request-body parameter for this
 /// model. Only the `text-embedding-3-*` family honors it (it's how 3-large is
 /// pinned to 1024 = `EMBEDDING_DIM`). Sending it to other models or to
@@ -408,39 +436,53 @@ pub fn default_embedding_provider_with_config(config: &Config) -> Arc<dyn Embedd
         && !provider.eq_ignore_ascii_case("cloud")
         && !provider.eq_ignore_ascii_case("managed")
     {
-        let api_key = super::rpc::resolve_api_key(config, stored_provider);
-        let custom_endpoint = provider.strip_prefix("custom:");
-        let provider_slug = if custom_endpoint.is_some() {
-            "custom"
-        } else {
-            provider
+        let (provider_slug, raw_custom_endpoint) = match provider.strip_prefix("custom:") {
+            Some(endpoint) => ("custom", Some(endpoint)),
+            None if provider == "custom" => ("custom", None),
+            None => (provider, None),
+        };
+        let api_key = super::rpc::resolve_api_key(config, provider_slug);
+        let custom_endpoint = match raw_custom_endpoint {
+            Some(endpoint) => validate_custom_endpoint(endpoint, !api_key.is_empty()).map(Some),
+            None if provider_slug == "custom" => {
+                Err(anyhow::anyhow!("custom embedding provider endpoint is missing"))
+            }
+            None => Ok(None),
         };
         let requires_key = matches!(provider_slug, "voyage" | "openai" | "cohere")
             || (provider_slug == "custom" && custom_endpoint.is_none());
-        match create_embedding_provider_with_config(
-            config,
-            provider_slug,
-            &config.memory.embedding_model,
-            config.memory.embedding_dimensions,
-            &api_key,
-            custom_endpoint,
-        ) {
-            Ok(provider) if !requires_key || !api_key.is_empty() => return Arc::from(provider),
-            Err(_) => {
-                let kind = match provider {
-                    "voyage" | "openai" | "cohere" | "ollama" | "none" => provider,
-                    _ if provider.starts_with("custom") => "custom",
-                    _ => "unknown",
-                };
-                log::warn!(
-                    "[embeddings::factory] configured embedding provider failed to build (kind={kind}); falling back to managed cloud embedder"
-                );
+        if let Ok(custom_endpoint) = custom_endpoint {
+            match create_embedding_provider_with_config(
+                config,
+                provider_slug,
+                &config.memory.embedding_model,
+                config.memory.embedding_dimensions,
+                &api_key,
+                custom_endpoint.as_deref(),
+            ) {
+                Ok(provider) if !requires_key || !api_key.is_empty() => {
+                    return Arc::from(provider)
+                }
+                Err(_) => {
+                    let kind = match provider {
+                        "voyage" | "openai" | "cohere" | "ollama" | "none" => provider,
+                        _ if provider.starts_with("custom") => "custom",
+                        _ => "unknown",
+                    };
+                    log::warn!(
+                        "[embeddings::factory] configured embedding provider failed to build (kind={kind}); falling back to managed cloud embedder"
+                    );
+                }
+                Ok(_) => {
+                    log::warn!(
+                        "[embeddings::factory] configured embedding provider has no stored credential (kind={provider_slug}); falling back to managed cloud embedder"
+                    );
+                }
             }
-            Ok(_) => {
-                log::warn!(
-                    "[embeddings::factory] configured embedding provider has no stored credential (kind={provider_slug}); falling back to managed cloud embedder"
-                );
-            }
+        } else {
+            log::warn!(
+                "[embeddings::factory] configured custom embedding provider has no valid endpoint; falling back to managed cloud embedder"
+            );
         }
     }
     let (state_dir, encrypt_secrets) = managed_credential_scope(config);
