@@ -93,7 +93,7 @@ function blurWith(input: HTMLElement, value: string) {
 }
 
 const memoryInput = () => screen.getByDisplayValue('512');
-const cpuInput = () => screen.getByDisplayValue('1');
+const cpuInput = () => screen.getByRole('spinbutton', { name: /cpu limit/i });
 const imageInput = () => screen.getByDisplayValue('alpine:3.20');
 
 beforeEach(() => {
