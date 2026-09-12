@@ -15,3 +15,17 @@ warning: value assigned to `stored` is never read
 warning: `tinyagents-graph` (lib) generated 1 warning
 warning: openhuman@0.63.25: A globbed `cargo test` SILENTLY SKIPS these targets in this feature configuration and still exits 0: json_rpc_e2e (needs voice), observability_smoke (needs crash-reporting), raw_coverage_all (needs voice + inference), x402_twit_sh_live (needs web3). Run them with `--features crash-reporting,inference,voice,web3`, or use the product set: cargo test --features "$(bash scripts/ci/product-features.sh)". Naming a target explicitly (cargo test --test json_rpc_e2e) errors instead of skipping — only the globbed form is silent.
    Compiling openhuman v0.63.25 (/home/enamakel/work/openhuman/worktrees/pr-5736)
+warning: unused import: `MemoryConfig`
+  --> src/openhuman/agent/agent_tests.rs:32:45
+   |
+32 | use crate::openhuman::config::{AgentConfig, MemoryConfig};
+   |                                             ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `super::*`
+   --> src/openhuman/inference/provider/claude_code/driver_tests.rs:287:5
+    |
+287 | use super::*;
+    |     ^^^^^^^^
+
