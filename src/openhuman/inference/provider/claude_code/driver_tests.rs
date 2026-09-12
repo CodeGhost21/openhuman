@@ -1,3 +1,4 @@
+
 use super::*;
 
 #[test]
@@ -189,19 +190,19 @@ fn push_bounded_never_splits_a_character() {
     // "aéb" is 4 bytes: a=0, é=1..2, b=3. A cap of 2 lands *inside* 'é', so the
     // helper must back up to byte 1 -- `String::truncate(2)` would panic here.
     let mut acc = String::new();
-    push_bounded(&mut acc, "aéb", 2);
+    super::push_bounded(&mut acc, "aéb", 2);
     assert_eq!(acc, "a", "must back up to the boundary, not split it");
 
     // A cap of 3 lands exactly on a boundary, so nothing is given up needlessly.
     let mut acc = String::new();
-    push_bounded(&mut acc, "aéb", 3);
+    super::push_bounded(&mut acc, "aéb", 3);
     assert_eq!(acc, "aé");
     assert!(acc.len() <= 3);
 
     // The same, driven the way the reader does it: many small chunks over the cap.
     let mut acc = String::new();
     for _ in 0..600 {
-        push_bounded(&mut acc, "日本語テキスト", 1024);
+        super::push_bounded(&mut acc, "日本語テキスト", 1024);
     }
     assert!(acc.len() <= 1024);
     // The real assertion: it is still valid UTF-8 and did not panic getting here.
@@ -211,14 +212,71 @@ fn push_bounded_never_splits_a_character() {
 #[test]
 fn push_bounded_keeps_everything_below_the_cap() {
     let mut acc = String::new();
-    push_bounded(&mut acc, "hello ", 64);
-    push_bounded(&mut acc, "world", 64);
+    super::push_bounded(&mut acc, "hello ", 64);
+    super::push_bounded(&mut acc, "world", 64);
     assert_eq!(acc, "hello world");
 }
 
 #[test]
 fn push_bounded_handles_an_ascii_cap_exactly() {
     let mut acc = String::new();
-    push_bounded(&mut acc, "abcdef", 3);
+    super::push_bounded(&mut acc, "abcdef", 3);
     assert_eq!(acc, "abc");
+}
+#[test]
+fn parse_error_events_produce_a_log_line() {
+    let ev = ClaudeCodeEvent::ParseError {
+        line: "{not json".to_string(),
+        reason: "expected value at line 1 column 2".to_string(),
+    };
+    let msg = parse_error_log_line(&ev).expect("a ParseError must be reported");
+    assert!(msg.contains("expected value at line 1 column 2"), "{msg}");
+    assert!(msg.contains("9 bytes"), "{msg}");
+}
+
+#[test]
+fn other_events_produce_nothing() {
+    let ev = ClaudeCodeEvent::Error {
+        message: "boom".to_string(),
+    };
+    assert!(parse_error_log_line(&ev).is_none());
+}
+
+/// An unparsable line can be a well-formed event of an unknown type, so it
+/// can hold the prompt, the reply, or a credential. None of it is quoted.
+#[test]
+fn the_line_itself_is_never_quoted() {
+    let ev = ClaudeCodeEvent::ParseError {
+        line: r#"{"type":"secret_leak","api_key":"sk-ant-not-in-the-log"}"#.to_string(),
+        reason: "unknown event type `secret_leak`".to_string(),
+    };
+    let msg = parse_error_log_line(&ev).unwrap();
+    assert!(!msg.contains("sk-ant-not-in-the-log"), "{msg}");
+    assert!(!msg.contains("api_key"), "{msg}");
+}
+
+/// Size is reported instead of content, so a truncated stream still reads
+/// differently from a chatty one.
+#[test]
+fn the_size_of_the_line_is_reported() {
+    let ev = ClaudeCodeEvent::ParseError {
+        line: "x".repeat(5_000),
+        reason: "trailing characters".to_string(),
+    };
+    assert!(parse_error_log_line(&ev).unwrap().contains("5000 bytes"));
+}
+
+#[test]
+fn the_shape_of_the_line_is_reported() {
+    let shape = |line: &str| {
+        parse_error_log_line(&ClaudeCodeEvent::ParseError {
+            line: line.to_string(),
+            reason: "r".to_string(),
+        })
+        .unwrap()
+    };
+    assert!(shape(r#"  {"type":"x"}"#).contains("json object"));
+    assert!(shape("[1,2]").contains("json array"));
+    assert!(shape("panic: claude-code crashed").contains("non-json"));
+    assert!(shape("   ").contains("blank"));
 }
