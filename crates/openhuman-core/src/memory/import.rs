@@ -352,6 +352,18 @@ pub fn status(config: &Config) -> ImportState {
     state
 }
 
+/// Whether the import is one the app quit in the middle of, which the
+/// background job resumes on its own ([`resume_interrupted`]): `status`
+/// reports it as `Error`, and the UI keeps watching it for the resume.
+#[must_use]
+pub fn resumes_on_its_own(config: &Config) -> bool {
+    let live = RUNNING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&config.workspace_dir);
+    !live && read_file(&config.workspace_dir).state.phase == ImportPhase::Running
+}
+
 /// Whether background work is paused right now. An automatic resume asks
 /// before it starts and again before every batch it stores.
 pub(crate) type PauseCheck = Arc<dyn Fn() -> bool + Send + Sync>;

@@ -5056,6 +5056,7 @@ const messages: TranslationMap = {
   'memoryPage.import.running': '正在导入旧版记忆…',
   'memoryPage.import.done': '旧版记忆已导入',
   'memoryPage.import.failed': '导入失败',
+  'memoryPage.import.paused': '导入已暂停',
   'memoryPage.import.resume': '继续导入',
   'memoryPage.import.failedItems': '未能导入的项目：{count}',
   'memoryPage.import.retryFailed': '重试失败的项目',

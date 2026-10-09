@@ -830,8 +830,12 @@ export function memoryConversationsBackfillStart(): Promise<BackfillView> {
   return call<BackfillView>(CORE_RPC_METHODS.memoryConversationsBackfillStart, { consent: true });
 }
 
-export function memoryImportStatus(): Promise<{ state: ImportState }> {
-  return call<{ state: ImportState }>(CORE_RPC_METHODS.memoryImportStatus);
+/**
+ * `resumes`: the app quit mid-import and the background job resumes it on its
+ * own; `state.phase` then reads `error`.
+ */
+export function memoryImportStatus(): Promise<{ state: ImportState; resumes?: boolean }> {
+  return call<{ state: ImportState; resumes?: boolean }>(CORE_RPC_METHODS.memoryImportStatus);
 }
 
 /** Stores again the items a finished import skipped because the engine refused them. */

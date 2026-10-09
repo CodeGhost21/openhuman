@@ -324,6 +324,39 @@ fn a_running_state_with_no_live_import_reads_as_interrupted() {
         .contains("resumes on its own"));
 }
 
+#[test]
+fn only_an_interrupted_import_resumes_on_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_in(&tmp);
+    assert!(!resumes_on_its_own(&config), "nothing started");
+    let mut file = ImportFile {
+        listed_unconfirmed: false,
+        paused_for_credits: false,
+        failed: Vec::new(),
+        retrying: false,
+        state: ImportState {
+            phase: ImportPhase::Running,
+            imported: 3,
+            total: 9,
+            error: None,
+            failed: 0,
+        },
+        checkpoint: Checkpoint::default(),
+    };
+    write_file(&config.workspace_dir, &file);
+    assert!(resumes_on_its_own(&config), "quit mid-run");
+
+    file.state.phase = ImportPhase::Error;
+    file.state.error = Some("unauthorized: sign in".into());
+    write_file(&config.workspace_dir, &file);
+    assert!(!resumes_on_its_own(&config), "a stop waits for the user");
+
+    file.state.phase = ImportPhase::Done;
+    file.state.error = None;
+    write_file(&config.workspace_dir, &file);
+    assert!(!resumes_on_its_own(&config), "finished");
+}
+
 #[tokio::test]
 async fn a_finished_import_starts_over_when_run_again() {
     let tmp = tempfile::tempdir().unwrap();

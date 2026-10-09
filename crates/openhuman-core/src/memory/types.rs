@@ -418,6 +418,9 @@ pub struct ImportState {
 pub struct ImportStateView {
     /// The state.
     pub state: ImportState,
+    /// The import stopped because the app quit in the middle of it, and the
+    /// background job resumes it on its own (`state.phase` reads `Error`).
+    pub resumes: bool,
 }
 
 /// A recall citation attached to a chat reply so the UI can show where a

@@ -5252,6 +5252,7 @@ const messages: TranslationMap = {
   'memoryPage.import.running': 'جارٍ استيراد الذاكرة السابقة…',
   'memoryPage.import.done': 'تم استيراد الذاكرة السابقة',
   'memoryPage.import.failed': 'فشل الاستيراد',
+  'memoryPage.import.paused': 'الاستيراد متوقف مؤقتًا',
   'memoryPage.import.resume': 'استئناف الاستيراد',
   'memoryPage.import.failedItems': 'العناصر التي تعذّر استيرادها: {count}.',
   'memoryPage.import.retryFailed': 'إعادة محاولة العناصر الفاشلة',

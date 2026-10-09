@@ -44,6 +44,8 @@ const mlog = debug('openhuman:memory:migration');
 
 /** How often a running import is polled. */
 export const IMPORT_POLL_MS = 1_500;
+/** How often an interrupted import is polled, to notice the background job resume it. */
+export const IMPORT_RESUME_POLL_MS = 15_000;
 /** How often a running move is polled. */
 export const MIGRATION_POLL_MS = 2_000;
 /** How often an offered move is polled, to notice the background job start it. */
@@ -85,6 +87,8 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
   const { t } = useT();
   const [scan, setScan] = useState<ImportScan | null>(null);
   const [state, setState] = useState<ImportState | null>(null);
+  // The import was interrupted and the background job resumes it on its own.
+  const [resumes, setResumes] = useState(false);
   const [consentOpen, setConsentOpen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +106,7 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
         log('scan: found=%s phase=%s', found.found, status?.state.phase ?? 'n/a');
         setScan(found);
         if (status && status.state.phase !== 'idle') setState(status.state);
+        setResumes(status?.resumes === true);
         setImportKnown(status !== null);
       })
       .catch(err => {
@@ -120,6 +125,7 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
     try {
       const res = await memoryImportStatus();
       setState(res.state);
+      setResumes(res.resumes === true);
     } catch (err) {
       log('status failed: %o', err);
       setError(memoryErrorMessage(err, t));
@@ -133,6 +139,15 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
     return () => clearInterval(timer);
   }, [running, poll]);
 
+  // Nothing failed: keep reading until the background job picks it up again.
+  const resuming = state?.phase === 'error' && resumes;
+  useEffect(() => {
+    if (!resuming) return;
+    log('interrupted import: watching for the automatic resume');
+    const timer = setInterval(() => void poll(), IMPORT_RESUME_POLL_MS);
+    return () => clearInterval(timer);
+  }, [resuming, poll]);
+
   const start = async () => {
     setStarting(true);
     setError(null);
@@ -140,6 +155,7 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
       const res = await memoryImportStart();
       log('import started: phase=%s total=%d', res.state.phase, res.state.total);
       setState(res.state);
+      setResumes(false);
       setConsentOpen(false);
     } catch (err) {
       log('import start failed: %o', err);
@@ -384,7 +400,11 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
         !(importDone && showMove && !(state.failed ?? 0)) && (
           <Alert
             variant={
-              state.phase === 'error' ? 'destructive' : state.phase === 'done' ? 'success' : 'info'
+              state.phase === 'error' && !resuming
+                ? 'destructive'
+                : state.phase === 'done'
+                  ? 'success'
+                  : 'info'
             }
             data-testid={`memory-import-${state.phase}`}>
             <div className="w-full space-y-2">
@@ -393,7 +413,9 @@ export default function MemoryImportBanner({ engineLabel }: MemoryImportBannerPr
                   ? t('memoryPage.import.running')
                   : state.phase === 'done'
                     ? t('memoryPage.import.done')
-                    : t('memoryPage.import.failed')}
+                    : resuming
+                      ? t('memoryPage.import.paused')
+                      : t('memoryPage.import.failed')}
               </AlertTitle>
               {state.phase === 'running' && (
                 <Progress

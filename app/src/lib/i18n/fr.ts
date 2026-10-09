@@ -5476,6 +5476,7 @@ const messages: TranslationMap = {
   'memoryPage.import.running': "Importation de l'ancienne mémoire…",
   'memoryPage.import.done': 'Ancienne mémoire importée',
   'memoryPage.import.failed': "Échec de l'importation",
+  'memoryPage.import.paused': 'Importation en pause',
   'memoryPage.import.resume': "Reprendre l'importation",
   'memoryPage.import.failedItems': "Éléments qui n'ont pas pu être importés : {count}.",
   'memoryPage.import.retryFailed': 'Réessayer les éléments en échec',

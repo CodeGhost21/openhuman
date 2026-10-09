@@ -5645,6 +5645,7 @@ const messages: TranslationMap = {
   'memoryPage.import.running': '以前のメモリーをインポート中…',
   'memoryPage.import.done': '以前のメモリーをインポートしました',
   'memoryPage.import.failed': 'インポートできませんでした',
+  'memoryPage.import.paused': 'インポートを一時停止中',
   'memoryPage.import.progress': '{total}件中{imported}件をインポート済み',
   'memoryPage.import.none': 'このデバイスに以前のメモリーは見つかりませんでした。',
   'memoryPage.import.doneBody': '以前のメモリーはすでに CortexDB にあります。',

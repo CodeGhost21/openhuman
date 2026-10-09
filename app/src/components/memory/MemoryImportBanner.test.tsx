@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../test/test-utils';
 import MemoryImportBanner, {
   IMPORT_POLL_MS,
+  IMPORT_RESUME_POLL_MS,
   MIGRATION_IDLE_POLL_MS,
   MIGRATION_POLL_MS,
 } from './MemoryImportBanner';
@@ -224,6 +225,53 @@ describe('MemoryImportBanner', () => {
     );
     expect(hoisted.start).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('memory-import-resume')).not.toBeInTheDocument();
+  });
+
+  it('watches an interrupted import until the background job resumes it', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    hoisted.status.mockResolvedValue({
+      state: {
+        phase: 'error',
+        imported: 425,
+        total: 1476,
+        error: 'the import was interrupted; it resumes on its own within a few minutes',
+      },
+      resumes: true,
+    });
+    renderWithProviders(<MemoryImportBanner engineLabel="TinyHumans" />);
+    const paused = await screen.findByTestId('memory-import-error');
+    expect(paused).toHaveTextContent('Import paused');
+    expect(paused).not.toHaveTextContent('Import failed');
+
+    hoisted.status.mockResolvedValue({ state: { phase: 'running', imported: 450, total: 1476 } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IMPORT_RESUME_POLL_MS + 10);
+    });
+    expect(await screen.findByTestId('memory-import-running')).toHaveTextContent(
+      '450 of 1476 items imported'
+    );
+
+    hoisted.status.mockResolvedValue({ state: { phase: 'done', imported: 1476, total: 1476 } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IMPORT_POLL_MS + 10);
+    });
+    expect(await screen.findByTestId('memory-import-done')).toHaveTextContent(
+      '1476 of 1476 items imported'
+    );
+  });
+
+  it('does not watch a failed import that waits for the user', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    hoisted.status.mockResolvedValue({
+      state: { phase: 'error', imported: 2, total: 9, error: 'unauthorized: sign in' },
+    });
+    renderWithProviders(<MemoryImportBanner engineLabel="TinyHumans" />);
+    expect(await screen.findByTestId('memory-import-error')).toHaveTextContent('Import failed');
+    const reads = hoisted.status.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IMPORT_RESUME_POLL_MS * 2 + 10);
+    });
+    expect(hoisted.status.mock.calls.length).toBe(reads);
   });
 
   it('offers no resume while an import is running', async () => {

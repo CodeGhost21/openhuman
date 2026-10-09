@@ -277,7 +277,10 @@ pub(super) fn import_start(params: Map<String, Value>) -> ControllerFuture {
         finish(
             import::start(&config, params.consent)
                 .await
-                .map(|state| ImportStateView { state }),
+                .map(|state| ImportStateView {
+                    state,
+                    resumes: false,
+                }),
         )
     })
 }
@@ -287,7 +290,8 @@ pub(super) fn import_status(params: Map<String, Value>) -> ControllerFuture {
         parse::<EmptyParams>(params)?;
         let config = load().await?;
         to_json(json!(ImportStateView {
-            state: import::status(&config)
+            resumes: import::resumes_on_its_own(&config),
+            state: import::status(&config),
         }))
     })
 }
@@ -299,7 +303,10 @@ pub(super) fn import_retry_failed(params: Map<String, Value>) -> ControllerFutur
         finish(
             import::retry_failed(&config)
                 .await
-                .map(|state| ImportStateView { state }),
+                .map(|state| ImportStateView {
+                    state,
+                    resumes: false,
+                }),
         )
     })
 }
