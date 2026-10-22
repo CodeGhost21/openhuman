@@ -742,12 +742,19 @@ jobs:
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_URL: ${{ vars.SENTRY_URL }}
     steps:
+      - name: Require the Sentry token
+        # A release must record its deploy marker; an empty token is a broken
+        # secret, not a reason to skip (#8201).
+        shell: bash
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::error::SENTRY_AUTH_TOKEN is empty on this environment; the Sentry deploy marker cannot be recorded."
+            exit 1
+          fi
       - name: Install sentry-cli
-        if: env.SENTRY_AUTH_TOKEN != ''
         shell: bash
         run: curl -sSf https://sentry.io/get-cli/ | bash
       - name: Record deploy marker
-        if: env.SENTRY_AUTH_TOKEN != ''
         shell: bash
         env:
           SENTRY_URL: ${{ vars.SENTRY_URL }}

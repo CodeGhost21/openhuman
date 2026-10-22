@@ -286,6 +286,33 @@ jobs:
             done
           fi
 
+      - name: Require Sentry upload settings
+        # Only the release workflows call this one, and both run with their
+        # environment's secrets, so an empty Sentry setting is a broken secret,
+        # never an expected fork or PR build. Fail here rather than skip the
+        # uploads and ship a release whose crashes cannot be symbolicated
+        # (#8201; the swallowed failures of #8104).
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT_REACT: ${{ vars.SENTRY_PROJECT_REACT }}
+          SENTRY_PROJECT_TAURI: ${{ vars.SENTRY_PROJECT_TAURI }}
+          SENTRY_PROJECT_CORE: ${{ vars.SENTRY_PROJECT_CORE }}
+          BUILD_SIDECAR: ${{ inputs.build_sidecar }}
+        run: |
+          required="SENTRY_AUTH_TOKEN SENTRY_URL SENTRY_ORG SENTRY_PROJECT_REACT SENTRY_PROJECT_TAURI"
+          if [ "$BUILD_SIDECAR" = "true" ]; then required="$required SENTRY_PROJECT_CORE"; fi
+          missing=""
+          for var in $required; do
+            if [ -z "${!var}" ]; then missing="$missing $var"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing Sentry setting(s):$missing. Set them on this environment; a release must not ship unsymbolicated."
+            exit 1
+          fi
+
       - name: Define Tauri configuration overrides
         # `prepareTauriConfig.js` only reads `WITH_UPDATER` (flips
         # `bundle.createUpdaterArtifacts` on for the release pipeline) and
@@ -506,10 +533,9 @@ jobs:
       # didn't match dist/assets) production events arrive in Sentry as
       # unsymbolicated minified frames. The plugin logs a warning then
       # exits 0, so the only safe check is to inspect the shipped bundle
-      # for injected debug-IDs. Skipped when SENTRY_AUTH_TOKEN is empty
-      # (e.g. fork/PR builds where the upload was deliberately disabled).
+      # for injected debug-IDs. Always runs: "Require Sentry upload settings"
+      # above already failed the build if the token was missing (#8201).
       - name: Verify Sentry source-map upload (frontend)
-        if: env.SENTRY_AUTH_TOKEN != ''
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -525,7 +551,6 @@ jobs:
       # Symbols are keyed by debug-ID, so it's safe to run per-matrix-target
       # without collisions — Sentry merges artifacts across platforms.
       - name: Upload Tauri shell debug symbols to Sentry (tauri project)
-        if: env.SENTRY_AUTH_TOKEN != ''
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -559,7 +584,7 @@ jobs:
       # `src/main.rs` and reports to `openhuman-core`. Only built when the
       # caller opts into `build_sidecar`; production currently does not.
       - name: Upload standalone core CLI debug symbols to Sentry (core project)
-        if: inputs.build_sidecar && env.SENTRY_AUTH_TOKEN != ''
+        if: inputs.build_sidecar
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
