@@ -27,6 +27,7 @@
 pub mod agents;
 pub mod blob_sweep;
 pub mod boot;
+mod claim_bound;
 pub mod config;
 pub mod documents;
 pub mod fence;
