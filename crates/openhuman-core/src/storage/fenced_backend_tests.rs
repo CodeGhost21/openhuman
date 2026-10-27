@@ -315,3 +315,44 @@ async fn captured_profile_sweeps_cannot_follow_a_replacement_epoch() {
 
 #[path = "fenced_backend_upstream_tests.rs"]
 mod upstream_tests;
+
+#[tokio::test]
+async fn fenced_handles_declare_collections_on_a_backend_that_refuses_conditioned_declarations() {
+    // Leases kept in the backend put a driver condition on every profile
+    // handle; MongoDB refuses to declare collections under one (#8422).
+    let shared = shared();
+    let refusing = crate::storage::test_support::refusing_conditioned_declarations(Arc::clone(
+        &shared.backend,
+    ));
+    let node = Node::new("node-a", refusing);
+    let (_grant, fence) = node.acquire("alice").await;
+    let lease = fence
+        .write_condition()
+        .expect("a lease kept in the backend has a driver condition");
+    let storage = node.storage();
+    let spec = CollectionSpec::new("declared_under_lease");
+    storage.documents().ensure_collection(&spec).await.unwrap();
+    let _ = storage.documents().validate_collection_spec(&spec).await;
+    storage
+        .documents()
+        .put(
+            "declared_under_lease",
+            "row",
+            json!({}),
+            Precondition::Absent,
+        )
+        .await
+        .unwrap();
+
+    // The same through a claim on top of the lease (an admitted profile's
+    // import): the claim's storage is opened from the fenced backend.
+    let conditioned = node
+        .backend
+        .for_scope_conditioned(&Scope::new("profile:alice").unwrap(), &lease)
+        .unwrap();
+    conditioned
+        .documents()
+        .ensure_collection(&CollectionSpec::new("declared_under_claim"))
+        .await
+        .unwrap();
+}

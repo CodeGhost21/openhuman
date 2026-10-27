@@ -168,3 +168,114 @@ pub fn sqlite_backend_in(
         url,
     })
 }
+
+/// `inner`, but with conditioned document handles that refuse collection
+/// declarations the way MongoDB's driver does (#8422), so storage tests
+/// reproduce MongoDB without a server.
+pub(crate) fn refusing_conditioned_declarations(
+    inner: Arc<dyn StorageBackend>,
+) -> Arc<dyn StorageBackend> {
+    Arc::new(RefusesConditionedDeclarations(inner))
+}
+
+#[derive(Debug)]
+struct RefusesConditionedDeclarations(Arc<dyn StorageBackend>);
+
+impl StorageBackend for RefusesConditionedDeclarations {
+    fn capabilities(&self) -> tinystoragedrivers_types::Capabilities {
+        self.0.capabilities()
+    }
+
+    fn for_scope(
+        &self,
+        scope: &tinystoragedrivers::Scope,
+    ) -> Result<tinystoragedrivers_api::Storage, tinystoragedrivers::StorageError> {
+        self.0.for_scope(scope)
+    }
+
+    fn for_scope_conditioned(
+        &self,
+        scope: &tinystoragedrivers::Scope,
+        condition: &tinystoragedrivers::WriteCondition,
+    ) -> Result<tinystoragedrivers_api::Storage, tinystoragedrivers::StorageError> {
+        let storage = self.0.for_scope_conditioned(scope, condition)?;
+        Ok(tinystoragedrivers_api::Storage::new(
+            Arc::new(RefusingDeclarations(Arc::clone(storage.documents()))),
+            Arc::clone(storage.streams()),
+            Arc::clone(storage.kv()),
+            Arc::clone(storage.blobs()),
+            Arc::clone(storage.queues()),
+            Arc::clone(storage.secrets()),
+        ))
+    }
+}
+
+/// A conditioned document handle that refuses declarations and passes
+/// everything else through.
+#[derive(Debug)]
+struct RefusingDeclarations(Arc<dyn tinystoragedrivers_api::DocumentStore>);
+
+mod refusing_declarations {
+    use serde_json::Value;
+    use tinystoragedrivers_api::DocumentStore;
+    use tinystoragedrivers_types::{
+        Capabilities, Capability, CollectionSpec, Filter, Page, Precondition, Query, Result, Sort,
+        StorageError, Version, Versioned, WriteOp, WriteOptions, WriteResult,
+    };
+
+    #[async_trait::async_trait]
+    impl DocumentStore for super::RefusingDeclarations {
+        fn capabilities(&self) -> Capabilities {
+            self.0.capabilities()
+        }
+        async fn ensure_collection(&self, _: &CollectionSpec) -> Result<()> {
+            Err(StorageError::unsupported(
+                Capability::ConditionalWrites,
+                "conditioned MongoDB handles cannot mutate collection declarations",
+            ))
+        }
+        async fn get(&self, c: &str, id: &str) -> Result<Option<Versioned<Value>>> {
+            self.0.get(c, id).await
+        }
+        async fn put(&self, c: &str, id: &str, v: Value, p: Precondition) -> Result<Version> {
+            self.0.put(c, id, v, p).await
+        }
+        async fn put_with(
+            &self,
+            c: &str,
+            id: &str,
+            v: Value,
+            p: Precondition,
+            o: WriteOptions,
+        ) -> Result<Version> {
+            self.0.put_with(c, id, v, p, o).await
+        }
+        async fn delete(&self, c: &str, id: &str, p: Precondition) -> Result<bool> {
+            self.0.delete(c, id, p).await
+        }
+        async fn query(&self, c: &str, q: &Query) -> Result<Page<Versioned<Value>>> {
+            self.0.query(c, q).await
+        }
+        async fn count(&self, c: &str, f: &Filter) -> Result<u64> {
+            self.0.count(c, f).await
+        }
+        async fn delete_where(&self, c: &str, f: &Filter) -> Result<u64> {
+            self.0.delete_where(c, f).await
+        }
+        async fn claim(
+            &self,
+            c: &str,
+            f: &Filter,
+            s: &[Sort],
+            p: &Value,
+        ) -> Result<Option<Versioned<Value>>> {
+            self.0.claim(c, f, s, p).await
+        }
+        async fn atomic_batch(&self, o: Vec<WriteOp>) -> Result<Vec<WriteResult>> {
+            self.0.atomic_batch(o).await
+        }
+        async fn drop_collection(&self, c: &str) -> Result<()> {
+            self.0.drop_collection(c).await
+        }
+    }
+}

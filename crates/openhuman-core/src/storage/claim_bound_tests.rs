@@ -2,120 +2,27 @@
 //! conditioned handles refuse to, as MongoDB's do (#8422), while a claim
 //! that was lost still cannot write.
 
-use std::sync::Arc;
+use super::*;
 
-use serde_json::{json, Value};
-use tinystoragedrivers::WriteCondition;
-use tinystoragedrivers_api::{DocumentStore, Storage};
+use serde_json::json;
 use tinystoragedrivers_types::{
-    Capabilities, Capability, CollectionSpec, Filter, Page, Precondition, Query, Result, Sort,
-    StorageError, Version, Versioned, WatchOptions, WriteOptions,
+    CollectionSpec, Filter, Precondition, Query, StorageError, WatchOptions, WriteOptions,
 };
 
-use super::claim_bound;
 use crate::storage::documents::Repo;
 use crate::storage::import_state;
-use crate::storage::{Scope, StorageBackend};
+use crate::storage::test_support::refusing_conditioned_declarations;
+use crate::storage::Scope;
 
 const OWNER: &str = "claim_bound_test";
 const ROWS: &str = "legacy_rows";
-
-/// A SQLite backend whose conditioned handles refuse collection
-/// declarations with MongoDB's error, so the tests reproduce production
-/// without a MongoDB server.
-#[derive(Debug)]
-struct RefusesConditionedDeclarations(Arc<dyn StorageBackend>);
-
-impl StorageBackend for RefusesConditionedDeclarations {
-    fn capabilities(&self) -> Capabilities {
-        self.0.capabilities()
-    }
-
-    fn for_scope(&self, scope: &tinystoragedrivers::Scope) -> Result<Storage> {
-        self.0.for_scope(scope)
-    }
-
-    fn for_scope_conditioned(
-        &self,
-        scope: &tinystoragedrivers::Scope,
-        condition: &WriteCondition,
-    ) -> Result<Storage> {
-        let storage = self.0.for_scope_conditioned(scope, condition)?;
-        Ok(Storage::new(
-            Arc::new(Refusing(Arc::clone(storage.documents()))),
-            Arc::clone(storage.streams()),
-            Arc::clone(storage.kv()),
-            Arc::clone(storage.blobs()),
-            Arc::clone(storage.queues()),
-            Arc::clone(storage.secrets()),
-        ))
-    }
-}
-
-/// A conditioned document handle that refuses declarations, as MongoDB's
-/// driver does.
-#[derive(Debug)]
-struct Refusing(Arc<dyn DocumentStore>);
-
-#[async_trait::async_trait]
-impl DocumentStore for Refusing {
-    fn capabilities(&self) -> Capabilities {
-        self.0.capabilities()
-    }
-    async fn ensure_collection(&self, _: &CollectionSpec) -> Result<()> {
-        Err(StorageError::unsupported(
-            Capability::ConditionalWrites,
-            "conditioned MongoDB handles cannot mutate collection declarations",
-        ))
-    }
-    async fn get(&self, c: &str, id: &str) -> Result<Option<Versioned<Value>>> {
-        self.0.get(c, id).await
-    }
-    async fn put(&self, c: &str, id: &str, v: Value, p: Precondition) -> Result<Version> {
-        self.0.put(c, id, v, p).await
-    }
-    async fn put_with(
-        &self,
-        c: &str,
-        id: &str,
-        v: Value,
-        p: Precondition,
-        o: WriteOptions,
-    ) -> Result<Version> {
-        self.0.put_with(c, id, v, p, o).await
-    }
-    async fn delete(&self, c: &str, id: &str, p: Precondition) -> Result<bool> {
-        self.0.delete(c, id, p).await
-    }
-    async fn query(&self, c: &str, q: &Query) -> Result<Page<Versioned<Value>>> {
-        self.0.query(c, q).await
-    }
-    async fn count(&self, c: &str, f: &Filter) -> Result<u64> {
-        self.0.count(c, f).await
-    }
-    async fn delete_where(&self, c: &str, f: &Filter) -> Result<u64> {
-        self.0.delete_where(c, f).await
-    }
-    async fn claim(
-        &self,
-        c: &str,
-        f: &Filter,
-        s: &[Sort],
-        p: &Value,
-    ) -> Result<Option<Versioned<Value>>> {
-        self.0.claim(c, f, s, p).await
-    }
-    async fn drop_collection(&self, c: &str) -> Result<()> {
-        self.0.drop_collection(c).await
-    }
-}
 
 /// The refusing backend over a fresh SQLite database, and a repo on it.
 fn refusing_repo() -> (tempfile::TempDir, Arc<dyn StorageBackend>, Repo) {
     let dir = tempfile::tempdir().unwrap();
     let url = format!("sqlite:{}", dir.path().join("claims.sqlite").display());
     let sqlite = crate::storage::block_on(async move { crate::storage::open(&url).await }).unwrap();
-    let backend: Arc<dyn StorageBackend> = Arc::new(RefusesConditionedDeclarations(sqlite));
+    let backend = refusing_conditioned_declarations(sqlite);
     let repo = Repo::on(&backend, &Scope::local(), "claim-bound-test", Vec::new).unwrap();
     (dir, backend, repo)
 }
@@ -196,13 +103,17 @@ fn a_lost_claim_may_declare_but_never_writes() {
             .unwrap()
             .documents(),
     );
-    let attempted = crate::storage::block_on(async move {
-        docs.ensure_collection(&CollectionSpec::new(ROWS)).await?;
-        docs.put(ROWS, "stale", json!({}), Precondition::Absent)
+    let (declared, written) = crate::storage::block_on(async move {
+        let declared = docs.ensure_collection(&CollectionSpec::new(ROWS)).await;
+        let written = docs
+            .put(ROWS, "stale", json!({}), Precondition::Absent)
             .await
-            .map(|_| ())
-    });
-    assert!(attempted.is_err(), "a stale claim cannot write");
+            .map(|_| ());
+        Ok::<_, StorageError>((declared, written))
+    })
+    .unwrap();
+    declared.expect("a lost claim may still declare a collection");
+    assert!(written.is_err(), "a stale claim cannot write");
     assert!(row(&repo, "stale").is_none());
 }
 
