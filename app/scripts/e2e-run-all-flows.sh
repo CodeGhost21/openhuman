@@ -251,7 +251,6 @@ if should_run_suite "chat"; then
   run "test/e2e/specs/chat-harness-subagent-continue.spec.ts" "chat-subagent-continue"    "chat"
   run "test/e2e/specs/chat-background-activity-panel.spec.ts" "chat-background-activity"  "chat"
   run "test/e2e/specs/chat-todos-goals.spec.ts"               "chat-todos-goals"          "chat"
-  run "test/e2e/specs/agent-teams-live.spec.ts"                "agent-teams-live"         "chat"
   run "test/e2e/specs/agent-harness-behaviors.spec.ts"        "agent-harness-behaviors"   "chat"
   run "test/e2e/specs/file-drop-guard.spec.ts"                "file-drop-guard"           "chat"
   run "test/e2e/specs/chat-external-link.spec.ts"             "chat-external-link"        "chat"

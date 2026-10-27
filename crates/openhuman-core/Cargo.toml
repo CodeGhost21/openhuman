@@ -355,7 +355,7 @@ url = "2"
 tempfile = "3"
 fs2 = "0.4"
 # Streams the layout-migration archive (`storage::layout::archive`), a `.tar.zst`.
-zstd = "0.13"
+zstd = "0.14"
 # The scheduler gate's battery/AC probe (`platform::llm_gate::signals`),
 # behind the `scheduler-gate` feature. CPU sampling uses `sysinfo` above.
 starship-battery = { version = "0.12", optional = true }
