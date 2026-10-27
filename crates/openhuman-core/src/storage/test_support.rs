@@ -217,10 +217,11 @@ struct RefusingDeclarations(Arc<dyn tinystoragedrivers_api::DocumentStore>);
 
 mod refusing_declarations {
     use serde_json::Value;
-    use tinystoragedrivers_api::DocumentStore;
+    use tinystoragedrivers_api::{DocumentStore, DocumentWatch};
     use tinystoragedrivers_types::{
-        Capabilities, Capability, CollectionSpec, Filter, Page, Precondition, Query, Result, Sort,
-        StorageError, Version, Versioned, WriteOp, WriteOptions, WriteResult,
+        Capabilities, Capability, CollectionSpec, Filter, Page, Precondition, Query, ReadCheck,
+        Result, SearchHit, Sort, StorageError, Version, Versioned, WatchOptions, WriteOp,
+        WriteOptions, WriteResult,
     };
 
     #[async_trait::async_trait]
@@ -273,6 +274,30 @@ mod refusing_declarations {
         }
         async fn atomic_batch(&self, o: Vec<WriteOp>) -> Result<Vec<WriteResult>> {
             self.0.atomic_batch(o).await
+        }
+        async fn atomic_batch_checked(
+            &self,
+            c: Vec<ReadCheck>,
+            o: Vec<WriteOp>,
+        ) -> Result<Vec<WriteResult>> {
+            self.0.atomic_batch_checked(c, o).await
+        }
+        async fn validate_collection_spec(&self, s: &CollectionSpec) -> Result<()> {
+            self.0.validate_collection_spec(s).await
+        }
+        async fn search(&self, c: &str, t: &str, l: usize) -> Result<Vec<SearchHit>> {
+            self.0.search(c, t, l).await
+        }
+        async fn collections(&self, p: &str) -> Result<Vec<String>> {
+            self.0.collections(p).await
+        }
+        async fn watch(
+            &self,
+            c: &str,
+            f: &Filter,
+            o: &WatchOptions,
+        ) -> Result<Box<dyn DocumentWatch>> {
+            self.0.watch(c, f, o).await
         }
         async fn drop_collection(&self, c: &str) -> Result<()> {
             self.0.drop_collection(c).await

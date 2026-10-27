@@ -324,15 +324,20 @@ async fn fenced_handles_declare_collections_on_a_backend_that_refuses_conditione
     let refusing = crate::storage::test_support::refusing_conditioned_declarations(Arc::clone(
         &shared.backend,
     ));
-    let node = Node::new("node-a", refusing);
+    let node = Node::new("node-a", Arc::clone(&refusing));
     let (_grant, fence) = node.acquire("alice").await;
-    let lease = fence
-        .write_condition()
-        .expect("a lease kept in the backend has a driver condition");
+    assert!(
+        fence.write_condition().is_some(),
+        "a lease kept in the backend has a driver condition"
+    );
     let storage = node.storage();
     let spec = CollectionSpec::new("declared_under_lease");
     storage.documents().ensure_collection(&spec).await.unwrap();
-    let _ = storage.documents().validate_collection_spec(&spec).await;
+    storage
+        .documents()
+        .validate_collection_spec(&spec)
+        .await
+        .unwrap();
     storage
         .documents()
         .put(
@@ -344,15 +349,55 @@ async fn fenced_handles_declare_collections_on_a_backend_that_refuses_conditione
         .await
         .unwrap();
 
-    // The same through a claim on top of the lease (an admitted profile's
-    // import): the claim's storage is opened from the fenced backend.
+    // An import claim on top of the lease (an admitted profile's import),
+    // taken through the fenced backend and released before it is used, so
+    // its condition no longer holds.
+    let profile = Scope::new("profile:alice").unwrap();
+    let fenced: Arc<dyn StorageBackend> = Arc::new(FencedBackend::new(
+        Arc::clone(&refusing),
+        Arc::clone(&node.fences),
+    ));
+    let claims = crate::storage::documents::Repo::on(
+        &fenced,
+        &crate::storage::Scope::from(profile.clone()),
+        "fence-claim-test",
+        Vec::new,
+    )
+    .unwrap();
+    let stale = tokio::task::spawn_blocking(move || {
+        crate::storage::import_state::with_claim(&claims, "fence_test", "import", |condition| {
+            Ok(condition.clone())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap()
+    .expect("the claim is free");
+
     let conditioned = node
         .backend
-        .for_scope_conditioned(&Scope::new("profile:alice").unwrap(), &lease)
+        .for_scope_conditioned(&profile, &stale)
         .unwrap();
-    conditioned
-        .documents()
-        .ensure_collection(&CollectionSpec::new("declared_under_claim"))
+    let docs = conditioned.documents();
+    docs.ensure_collection(&CollectionSpec::new("declared_under_claim"))
         .await
-        .unwrap();
+        .expect("a lease and a lost claim may still declare a collection");
+    let written = docs
+        .put(
+            "declared_under_claim",
+            "stale",
+            json!({}),
+            Precondition::Absent,
+        )
+        .await;
+    assert!(
+        written.is_err(),
+        "a lost claim cannot write under the lease"
+    );
+    assert!(storage
+        .documents()
+        .get("declared_under_claim", "stale")
+        .await
+        .unwrap()
+        .is_none());
 }

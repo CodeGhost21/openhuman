@@ -126,10 +126,11 @@ fn every_other_document_operation_stays_under_the_claim() {
         assert!(format!("{docs:?}").contains("ClaimBoundDocuments"));
         let claimed = backend.for_scope_conditioned(&Scope::local(), condition)?;
         assert_eq!(docs.capabilities(), claimed.documents().capabilities());
+        let claimed = Arc::clone(claimed.documents());
         crate::storage::block_on(async move {
             let spec = CollectionSpec::new(ROWS);
             docs.ensure_collection(&spec).await?;
-            let _ = docs.validate_collection_spec(&spec).await;
+            docs.validate_collection_spec(&spec).await?;
             docs.put(ROWS, "a", json!({ "n": 1 }), Precondition::Absent)
                 .await?;
             docs.put_with(
@@ -147,13 +148,33 @@ fn every_other_document_operation_stays_under_the_claim() {
             let _ = docs
                 .claim(ROWS, &Filter::All, &[], &json!({ "n": 3 }))
                 .await;
-            let _ = docs.atomic_batch(Vec::new()).await;
-            let _ = docs.atomic_batch_checked(Vec::new(), Vec::new()).await;
-            let _ = docs.search(ROWS, "n", 1).await;
-            let _ = docs.collections("").await;
-            let _ = docs
-                .watch(ROWS, &Filter::All, &WatchOptions::default())
-                .await;
+            // The optional operations answer exactly as the claimed handle does.
+            assert_eq!(
+                docs.atomic_batch(Vec::new()).await.is_ok(),
+                claimed.atomic_batch(Vec::new()).await.is_ok()
+            );
+            assert_eq!(
+                docs.atomic_batch_checked(Vec::new(), Vec::new())
+                    .await
+                    .is_ok(),
+                claimed
+                    .atomic_batch_checked(Vec::new(), Vec::new())
+                    .await
+                    .is_ok()
+            );
+            assert_eq!(
+                docs.search(ROWS, "n", 1).await.is_ok(),
+                claimed.search(ROWS, "n", 1).await.is_ok()
+            );
+            assert_eq!(
+                docs.collections("").await.is_ok(),
+                claimed.collections("").await.is_ok()
+            );
+            let watch = WatchOptions::default();
+            assert_eq!(
+                docs.watch(ROWS, &Filter::All, &watch).await.is_ok(),
+                claimed.watch(ROWS, &Filter::All, &watch).await.is_ok()
+            );
             assert_eq!(docs.delete_where(ROWS, &Filter::All).await?, 1);
             docs.drop_collection(ROWS).await?;
             Ok::<_, StorageError>(())
