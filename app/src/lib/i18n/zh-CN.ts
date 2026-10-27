@@ -1546,6 +1546,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': '在画布中打开',
   'chat.flowProposal.dismiss': '忽略',
   'chat.flowProposal.error': '无法保存该工作流。请重试。',
+  'chat.flowProposal.versionConflict':
+    '提案生成后该工作流已被修改，因此未覆盖。请重新请求一个修订版本。',
   'chat.flowProposal.enableError': '工作流已保存，但无法启用。请重试，或在“工作流”页面手动启用。',
   'chat.flowProposal.savedConfirmation': '已保存',
   'chat.flowProposal.viewWorkflow': '查看工作流',

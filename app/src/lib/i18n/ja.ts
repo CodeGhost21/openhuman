@@ -1896,6 +1896,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'キャンバスで開く',
   'chat.flowProposal.dismiss': '閉じる',
   'chat.flowProposal.error': 'ワークフローを保存できませんでした。もう一度お試しください。',
+  'chat.flowProposal.versionConflict':
+    'この提案の作成後にワークフローが変更されたため、上書きしませんでした。新しい改訂を依頼してください。',
   'chat.flowProposal.enableError':
     'ワークフローは保存されましたが、有効化できませんでした。もう一度お試しいただくか、ワークフローページから有効化してください。',
   // Terminal success state (issue B36): shown once the flow is saved and

@@ -1630,6 +1630,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': '캔버스에서 열기',
   'chat.flowProposal.dismiss': '닫기',
   'chat.flowProposal.error': '워크플로를 저장할 수 없습니다. 다시 시도하세요.',
+  'chat.flowProposal.versionConflict':
+    '제안이 만들어진 후 이 워크플로가 변경되어 덮어쓰지 않았습니다. 새 수정안을 요청하세요.',
   'chat.flowProposal.enableError':
     '워크플로는 저장되었지만 활성화할 수 없습니다. 다시 시도하거나 Workflows 페이지에서 활성화하세요.',
   'chat.flowProposal.savedConfirmation': '저장됨',

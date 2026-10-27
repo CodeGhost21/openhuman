@@ -1677,6 +1677,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Abrir en el lienzo',
   'chat.flowProposal.dismiss': 'Descartar',
   'chat.flowProposal.error': 'No se pudo guardar el flujo de trabajo. Inténtalo de nuevo.',
+  'chat.flowProposal.versionConflict':
+    'Este flujo de trabajo cambió después de crear la propuesta, así que no se sobrescribió. Pide una nueva revisión.',
   'chat.flowProposal.enableError':
     'Flujo de trabajo guardado, pero no se pudo activar. Inténtalo de nuevo o actívalo desde la página de Workflows.',
   'chat.flowProposal.savedConfirmation': 'Guardado',

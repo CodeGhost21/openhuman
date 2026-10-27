@@ -1899,6 +1899,8 @@ const en: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Open in canvas',
   'chat.flowProposal.dismiss': 'Dismiss',
   'chat.flowProposal.error': 'Could not save the workflow. Please try again.',
+  'chat.flowProposal.versionConflict':
+    'This workflow changed after the proposal was made, so it was not overwritten. Ask for a new revision.',
   'chat.flowProposal.enableError':
     'Workflow saved, but could not enable it. Try again, or enable it from the Workflows page.',
   // Terminal success state (issue B36): shown once the flow is saved and

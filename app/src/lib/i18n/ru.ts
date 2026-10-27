@@ -1657,6 +1657,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Открыть на холсте',
   'chat.flowProposal.dismiss': 'Скрыть',
   'chat.flowProposal.error': 'Не удалось сохранить рабочий процесс. Попробуйте еще раз.',
+  'chat.flowProposal.versionConflict':
+    'Этот рабочий процесс изменился после создания предложения, поэтому он не был перезаписан. Запросите новую редакцию.',
   'chat.flowProposal.enableError':
     'Рабочий процесс сохранён, но не удалось его включить. Попробуйте ещё раз или включите его на странице Workflows.',
   'chat.flowProposal.savedConfirmation': 'Сохранено',

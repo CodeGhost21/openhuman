@@ -1673,6 +1673,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Apri nel canvas',
   'chat.flowProposal.dismiss': 'Ignora',
   'chat.flowProposal.error': 'Impossibile salvare il workflow. Riprova.',
+  'chat.flowProposal.versionConflict':
+    'Questo workflow è cambiato dopo la proposta, quindi non è stato sovrascritto. Chiedi una nuova revisione.',
   'chat.flowProposal.enableError':
     'Workflow salvato, ma non è stato possibile attivarlo. Riprova, oppure attivalo dalla pagina Workflows.',
   'chat.flowProposal.savedConfirmation': 'Salvato',

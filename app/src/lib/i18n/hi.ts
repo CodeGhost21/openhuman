@@ -1649,6 +1649,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'कैनवास में खोलें',
   'chat.flowProposal.dismiss': 'खारिज करें',
   'chat.flowProposal.error': 'वर्कफ़्लो सहेजा नहीं जा सका। कृपया फिर से प्रयास करें।',
+  'chat.flowProposal.versionConflict':
+    'प्रस्ताव बनने के बाद यह वर्कफ़्लो बदल गया, इसलिए इसे ओवरराइट नहीं किया गया। नया संशोधन माँगें।',
   'chat.flowProposal.enableError':
     'वर्कफ़्लो सहेजा गया, लेकिन सक्षम नहीं किया जा सका। फिर से प्रयास करें, या Workflows पेज से इसे सक्षम करें।',
   'chat.flowProposal.savedConfirmation': 'सहेजा गया',

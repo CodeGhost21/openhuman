@@ -1666,6 +1666,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Otwórz na kanwie',
   'chat.flowProposal.dismiss': 'Odrzuć',
   'chat.flowProposal.error': 'Nie udało się zapisać przepływu pracy. Spróbuj ponownie.',
+  'chat.flowProposal.versionConflict':
+    'Ten przepływ pracy zmienił się po utworzeniu propozycji, więc nie został nadpisany. Poproś o nową wersję.',
   'chat.flowProposal.enableError':
     'Przepływ pracy zapisany, ale nie udało się go włączyć. Spróbuj ponownie lub włącz go na stronie Workflows.',
   'chat.flowProposal.savedConfirmation': 'Zapisano',

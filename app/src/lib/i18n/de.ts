@@ -1694,6 +1694,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.dismiss': 'Verwerfen',
   'chat.flowProposal.error':
     'Der Workflow konnte nicht gespeichert werden. Bitte versuchen Sie es erneut.',
+  'chat.flowProposal.versionConflict':
+    'Dieser Workflow wurde nach dem Vorschlag geändert und daher nicht überschrieben. Fordern Sie eine neue Überarbeitung an.',
   'chat.flowProposal.enableError':
     'Workflow gespeichert, konnte aber nicht aktiviert werden. Versuchen Sie es erneut oder aktivieren Sie ihn auf der Workflows-Seite.',
   'chat.flowProposal.savedConfirmation': 'Gespeichert',

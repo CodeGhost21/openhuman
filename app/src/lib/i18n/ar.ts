@@ -1616,6 +1616,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'فتح في اللوحة',
   'chat.flowProposal.dismiss': 'إغلاق',
   'chat.flowProposal.error': 'تعذّر حفظ سير العمل. حاول مرة أخرى.',
+  'chat.flowProposal.versionConflict':
+    'تغيّر سير العمل هذا بعد إعداد الاقتراح، لذا لم تتم الكتابة فوقه. اطلب مراجعة جديدة.',
   'chat.flowProposal.enableError':
     'تم حفظ سير العمل، لكن تعذّر تفعيله. حاول مرة أخرى، أو فعّله من صفحة سير العمل.',
   'chat.flowProposal.savedConfirmation': 'تم الحفظ',

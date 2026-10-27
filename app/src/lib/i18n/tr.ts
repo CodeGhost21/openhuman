@@ -1673,6 +1673,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Tuvalde aç',
   'chat.flowProposal.dismiss': 'Kapat',
   'chat.flowProposal.error': 'İş akışı kaydedilemedi. Lütfen yeniden deneyin.',
+  'chat.flowProposal.versionConflict':
+    'Bu iş akışı öneri oluşturulduktan sonra değişti, bu yüzden üzerine yazılmadı. Yeni bir revizyon isteyin.',
   'chat.flowProposal.enableError':
     'İş akışı kaydedildi ancak etkinleştirilemedi. Yeniden deneyin veya İş akışları sayfasından etkinleştirin.',
   'chat.flowProposal.savedConfirmation': 'Kaydedildi',

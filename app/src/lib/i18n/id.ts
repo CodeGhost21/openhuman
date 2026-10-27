@@ -1663,6 +1663,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Buka di kanvas',
   'chat.flowProposal.dismiss': 'Abaikan',
   'chat.flowProposal.error': 'Alur kerja tidak dapat disimpan. Silakan coba lagi.',
+  'chat.flowProposal.versionConflict':
+    'Alur kerja ini berubah setelah usulan dibuat, jadi tidak ditimpa. Minta revisi baru.',
   'chat.flowProposal.enableError':
     'Alur kerja disimpan, tetapi tidak dapat diaktifkan. Coba lagi, atau aktifkan dari halaman Workflows.',
   'chat.flowProposal.savedConfirmation': 'Tersimpan',

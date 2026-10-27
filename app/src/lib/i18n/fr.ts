@@ -1685,6 +1685,8 @@ const messages: TranslationMap = {
   'chat.flowProposal.openInCanvas': 'Ouvrir dans le canevas',
   'chat.flowProposal.dismiss': 'Ignorer',
   'chat.flowProposal.error': "Impossible d'enregistrer le workflow. Veuillez réessayer.",
+  'chat.flowProposal.versionConflict':
+    "Ce workflow a été modifié après la proposition, il n'a donc pas été écrasé. Demandez une nouvelle révision.",
   'chat.flowProposal.enableError':
     "Workflow enregistré, mais impossible de l'activer. Réessayez, ou activez-le depuis la page Workflows.",
   'chat.flowProposal.savedConfirmation': 'Enregistré',
