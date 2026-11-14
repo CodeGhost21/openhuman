@@ -306,17 +306,16 @@ pub async fn all_tools_with_runtime_and_pack_handle(
     // Presentation generation (#2778), backed by the native Rust engine.
     // Always registered.
     #[cfg(feature = "documents")]
-    tools.push(Box::new(PresentationTool::for_config(
-        root_config,
-        security.clone(),
-    )));
+    tools.push(Box::new(
+        crate::artifacts::tools::PresentationTool::for_config(root_config, security.clone()),
+    ));
 
     // Document generation (#4847, Problem 3). Native-Rust engine
     // (docx-rs backed) — no managed runtime, no subprocess — emitting a
     // real `.docx` through the same byte-agnostic artifact pipeline as
     // the presentation tool. Always registered; same constructor shape.
     #[cfg(feature = "documents")]
-    tools.push(Box::new(DocumentTool::for_config(
+    tools.push(Box::new(crate::artifacts::tools::DocumentTool::for_config(
         root_config,
         security.clone(),
     )));

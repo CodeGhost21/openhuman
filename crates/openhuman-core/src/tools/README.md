@@ -144,7 +144,7 @@ Where the built-in tools come from:
 | `gitbooks_search`, `gitbooks_get_page`, `mcp_list_servers`, `mcp_list_tools`, `mcp_call_tool`, `mcp_<server>_<tool>` | [`impl/network/`](./impl/network/) (MCP tools behind `mcp`) |
 | `gmail_unsubscribe` | [`integrations/gmail/`](../integrations/gmail/) |
 | `browser`, `browser_open` | [`impl/browser/`](./impl/browser/) (behind `modules`) |
-| `generate_document`, `generate_presentation` | [`impl/document/`](./impl/document/), [`impl/presentation/`](./impl/presentation/) (behind `documents`) |
+| `generate_document`, `generate_presentation` | [`artifacts/tools/`](../artifacts/tools/) (behind `documents`) |
 | `web_search` and the other search roles | `crate::search::build_search_tools` |
 
 ## Key types and entry points
