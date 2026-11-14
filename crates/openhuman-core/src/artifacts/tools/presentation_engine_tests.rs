@@ -8,8 +8,9 @@
 //! payload have to agree byte for byte, in order, or the module refuses the
 //! call. That agreement is this file's job.
 
-use super::super::presentation_types::{GeneratePresentationInput, SlideRequest};
 use super::*;
+
+use super::super::presentation_types::{GeneratePresentationInput, SlideRequest};
 use tinydocs_bus::spec::presentation::{PresentationSpec, SlideImage};
 
 fn slide(title: &str) -> SlideRequest {

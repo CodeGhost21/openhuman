@@ -1,5 +1,6 @@
-use super::super::document_types::DocumentSection;
 use super::*;
+
+use super::super::document_types::DocumentSection;
 
 fn sample_input() -> GenerateDocumentInput {
     GenerateDocumentInput {

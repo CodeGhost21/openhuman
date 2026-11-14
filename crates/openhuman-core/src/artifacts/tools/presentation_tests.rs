@@ -12,9 +12,10 @@
 //! swap continues to produce a valid `.pptx` from this tool's
 //! perspective.
 
+use super::*;
+
 use super::types::GeneratePresentationInput;
 use super::types::{PresentationError, MAX_BULLETS_PER_SLIDE, MAX_SLIDES, MAX_TEXT_CHARS};
-use super::*;
 
 use std::path::Path;
 
