@@ -225,7 +225,9 @@ async fn cancellation_reaps_the_leader_when_an_escaped_descendant_holds_its_pipe
                 _ = tokio::time::sleep(Duration::from_millis(10)) => {}
             }
             if let Ok(pid) = std::fs::read_to_string(&pidfile) {
-                break pid;
+                if pid.trim().parse::<u32>().is_ok() {
+                    break pid;
+                }
             }
         }
     })
