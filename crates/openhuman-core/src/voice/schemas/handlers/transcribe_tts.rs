@@ -5,8 +5,9 @@ use crate::core::all::{BoundRegisteredController, ControllerFuture, ControllerTa
 use crate::core::runtime::DispatchCtx;
 use serde_json::{Map, Value};
 
+use crate::util::params::outcome_value_to_json;
 use crate::voice::schemas::helpers::{
-    deserialize_params, effective_stt_provider, effective_tts_provider, to_json,
+    deserialize_params, effective_stt_provider, effective_tts_provider,
 };
 use crate::voice::schemas::params::{
     ReplySynthesizeParams, SttDispatchParams, TranscribeBytesParams, TranscribeParams,
@@ -85,7 +86,12 @@ pub(crate) fn voice_tts_dispatch_controller() -> BoundRegisteredController {
 }
 
 fn run_voice_status(_ctx: DispatchCtx, config: Config, (): ()) -> ControllerFuture {
-    Box::pin(async move { to_json(crate::voice::voice_status(&config).await?) })
+    Box::pin(async move {
+        outcome_value_to_json(
+            crate::voice::voice_status(&config).await?,
+            "serialize error: ",
+        )
+    })
 }
 
 fn run_voice_transcribe(
@@ -94,7 +100,7 @@ fn run_voice_transcribe(
     p: TranscribeParams,
 ) -> ControllerFuture {
     Box::pin(async move {
-        to_json(
+        outcome_value_to_json(
             crate::voice::voice_transcribe(
                 &config,
                 &p.audio_path,
@@ -102,6 +108,7 @@ fn run_voice_transcribe(
                 p.skip_cleanup,
             )
             .await?,
+            "serialize error: ",
         )
     })
 }
@@ -112,7 +119,7 @@ fn run_voice_transcribe_bytes(
     p: TranscribeBytesParams,
 ) -> ControllerFuture {
     Box::pin(async move {
-        to_json(
+        outcome_value_to_json(
             crate::voice::voice_transcribe_bytes(
                 &config,
                 &p.audio_bytes,
@@ -121,13 +128,17 @@ fn run_voice_transcribe_bytes(
                 p.skip_cleanup,
             )
             .await?,
+            "serialize error: ",
         )
     })
 }
 
 fn run_voice_tts(_ctx: DispatchCtx, config: Config, p: TtsParams) -> ControllerFuture {
     Box::pin(async move {
-        to_json(crate::voice::voice_tts(&config, &p.text, p.output_path.as_deref()).await?)
+        outcome_value_to_json(
+            crate::voice::voice_tts(&config, &p.text, p.output_path.as_deref()).await?,
+            "serialize error: ",
+        )
     })
 }
 
@@ -171,10 +182,11 @@ fn run_voice_reply_synthesize(
         let provider = crate::voice::create_tts_provider(&provider_name, &voice, &config)
             .await
             .map_err(|e| e.to_string())?;
-        to_json(
+        outcome_value_to_json(
             provider
                 .synthesize(&config, &p.text, effective_voice)
                 .await?,
+            "serialize error: ",
         )
     })
 }
@@ -266,7 +278,7 @@ fn run_voice_tts_dispatch(
         let outcome = provider
             .synthesize(&config, &p.text, effective_voice)
             .await?;
-        to_json(outcome)
+        outcome_value_to_json(outcome, "serialize error: ")
     })
 }
 
