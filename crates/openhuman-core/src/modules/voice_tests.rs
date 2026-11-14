@@ -1,6 +1,4 @@
-use super::{
-    encode_wav_pcm16, is_hallucinated, pcm16_le_base64, HallucinationMode, VoiceCallError,
-};
+use super::*;
 
 #[tokio::test]
 async fn transcript_screening_reports_unavailable_when_modules_are_disabled() {
@@ -26,7 +24,7 @@ async fn wav_encoding_reports_unavailable_when_modules_are_disabled() {
     config.modules.enabled = false;
 
     assert!(matches!(
-        encode_wav_pcm16(&config, &[0; 4], 16_000, 1).await,
+        encode_wav_pcm16(&config, &[0; 4], 16_000, 1, None).await,
         Err(VoiceCallError::Unavailable(_))
     ));
 }
@@ -45,4 +43,30 @@ fn pcm16_samples_cross_the_bus_as_little_endian_bytes() {
         [0x01, 0x00, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x80]
     );
     assert_eq!(pcm16_le_base64(&[]), "");
+}
+
+#[tokio::test]
+async fn a_bounded_encode_reports_still_loading_while_the_module_downloads() {
+    // Hold the process-wide resolution slot in flight, as a first-run download
+    // does, so the bounded wait passes before the module is ready.
+    let table = tinybus::module::resolution::global();
+    table.forget(MODULE_ID);
+    let _sender = table.mark_in_flight(MODULE_ID);
+
+    let result = encode_wav_pcm16(
+        &crate::config::Config::default(),
+        &[0; 4],
+        16_000,
+        1,
+        Some(std::time::Duration::ZERO),
+    )
+    .await;
+    table.forget(MODULE_ID);
+
+    assert_eq!(
+        result,
+        Err(VoiceCallError::Unavailable(
+            STILL_LOADING_MESSAGE.to_string()
+        ))
+    );
 }

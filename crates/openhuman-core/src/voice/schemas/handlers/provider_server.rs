@@ -372,6 +372,12 @@ pub(crate) fn handle_voice_test_provider(
     voice_test_provider_controller().invoke(ctx, params)
 }
 
+/// How long "Test STT" waits for the lazily loaded TinyVoice module before
+/// answering `ok: false`. Kept well under the 30 s abort in the frontend's
+/// `testVoiceProvider` so the user sees why instead of a client timeout; the
+/// download keeps running and a later test finds the module ready.
+const STT_TEST_MODULE_LOAD_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 fn run_voice_test_provider(ctx: DispatchCtx, p: VoiceTestProviderParams) -> ControllerFuture {
     Box::pin(async move {
         let config = ctx.load_config().await?;
@@ -445,6 +451,7 @@ fn run_voice_test_provider(ctx: DispatchCtx, p: VoiceTestProviderParams) -> Cont
                 &[0; SILENT_CLIP_SAMPLES],
                 SILENT_CLIP_SAMPLE_RATE,
                 1,
+                Some(STT_TEST_MODULE_LOAD_WAIT),
             )
             .await
             {
