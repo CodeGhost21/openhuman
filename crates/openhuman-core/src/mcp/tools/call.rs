@@ -175,8 +175,10 @@ impl Tool for McpCallTool {
                 ));
             }
         };
+        // Tool arguments are sensitive tool data, so they cross the bus
+        // confidentially, matching the direct `mcp_<server>_<tool>` executor.
         let call: tinymcp_bus::ClassifiedStaticToolCall = match client
-            .call(
+            .call_confidential(
                 &client_config,
                 tinymcp_bus::names::methods::STATIC_CALL_TOOL_CLASSIFIED,
                 (server.as_str(), tool.as_str(), arguments),

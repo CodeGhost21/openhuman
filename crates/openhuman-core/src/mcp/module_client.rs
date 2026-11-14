@@ -198,10 +198,22 @@ impl McpConfiguredClient {
         let listed: Vec<McpRemoteTool> = self
             .call(config, names::methods::STATIC_LIST_TOOLS, (server,))
             .await
-            .map_err(SafeStaticToolsError::List)?;
+            .map_err(|error| {
+                log::debug!(
+                    "[mcp] safe_static_tools list failed server={server} method={} error={error:?}",
+                    names::methods::STATIC_LIST_TOOLS
+                );
+                SafeStaticToolsError::List(error)
+            })?;
         self.screen_static_tools(config, server, listed)
             .await
-            .map_err(SafeStaticToolsError::Scrub)
+            .map_err(|error| {
+                log::debug!(
+                    "[mcp] safe_static_tools scrub failed server={server} method={} error={error:?}",
+                    names::methods::STATIC_SCRUB_TOOLS
+                );
+                SafeStaticToolsError::Scrub(error)
+            })
     }
 
     /// The scrub and screen half of [`Self::safe_static_tools`], for a listing
