@@ -344,7 +344,7 @@ impl OpenHumanTurnPrelude {
             &config.workspace_dir,
             &config.action_dir,
         ));
-        crate::tools::implementations::network::configured_server_tools_from_presentations(
+        crate::mcp::server_tools::configured_server_tools_from_presentations(
             config,
             presentations,
             &security,

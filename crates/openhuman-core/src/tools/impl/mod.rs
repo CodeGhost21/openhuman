@@ -6,6 +6,8 @@ pub mod network;
 #[cfg(feature = "documents")]
 pub mod presentation;
 pub mod system;
+#[cfg(feature = "mcp")]
+pub mod ui;
 
 pub use browser::*;
 #[cfg(feature = "documents")]
@@ -14,3 +16,5 @@ pub use network::*;
 #[cfg(feature = "documents")]
 pub use presentation::PresentationTool;
 pub use system::*;
+#[cfg(feature = "mcp")]
+pub use ui::ShowUiTool;

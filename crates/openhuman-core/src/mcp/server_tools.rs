@@ -23,6 +23,7 @@ use serde_json::Value;
 use tinytools::{PermissionLevel, Tool, ToolCategory, ToolExposure, ToolResult};
 
 use crate::config::Config;
+use crate::mcp::module_client::{McpConfiguredClient, SafeStaticToolsError};
 use crate::security::SecurityPolicy;
 
 /// Builds host adapters from TinyMCP-prepared declarations. Catalog retrieval,
@@ -113,47 +114,29 @@ impl Tool for ModuleConfiguredMcpServerTool {
             anyhow::bail!("MCP server configuration changed; rebuild tools before calling");
         }
 
-        let client = crate::mcp::module_client::McpConfiguredClient::for_config(&self.config)
+        let client = McpConfiguredClient::for_config(&self.config)
             .map_err(|_| anyhow::anyhow!("TinyMCP module is unavailable"))?;
         let client_config = crate::mcp::host::client_config(&self.config).await;
-        let live: Vec<tinymcp_bus::McpRemoteTool> = client
-            .call(
-                &client_config,
-                tinymcp_bus::names::methods::STATIC_LIST_TOOLS,
-                (self.presentation.server_id.as_str(),),
-            )
+        let safe = client
+            .safe_static_tools(&client_config, &self.presentation.server_id)
             .await
-            .map_err(|_| anyhow::anyhow!("MCP tool is unavailable"))?;
-        let live = client
-            .scrub_static_tools(&client_config, &self.presentation.server_id, live)
-            .await
-            .map_err(|_| anyhow::anyhow!("MCP tool metadata is unavailable"))?;
-        let tool_meta = live
-            .iter()
+            .map_err(|error| match error {
+                SafeStaticToolsError::List(_) => anyhow::anyhow!("MCP tool is unavailable"),
+                SafeStaticToolsError::Scrub(_) => {
+                    anyhow::anyhow!("MCP tool metadata is unavailable")
+                }
+            })?;
+        let Some(tool_meta) = safe
+            .into_iter()
             .find(|tool| tool.name == self.presentation.remote_name)
-            .and_then(|tool| tool.meta.clone());
-        let safe = crate::mcp::registry::tools_safe_for_agent(
-            &self.presentation.server_id,
-            live.into_iter()
-                .map(|tool| tinymcp_bus::McpTool {
-                    name: tool.name,
-                    description: tool.description.or(tool.title),
-                    input_schema: tool.input_schema,
-                    meta: None,
-                })
-                .collect(),
-        )
-        .await;
-        if !safe
-            .iter()
-            .any(|tool| tool.name == self.presentation.remote_name)
-        {
+            .map(|tool| tool.meta)
+        else {
             anyhow::bail!("MCP tool is no longer available or safe");
-        }
+        };
         let arguments = client
             .normalize_tool_arguments(Some(args))
             .await
-            .map_err(|error| anyhow::anyhow!(super::mcp::input_module_error_message(error)))?;
+            .map_err(|error| anyhow::anyhow!(super::tools::input_module_error_message(error)))?;
         let tool_input = Value::Object(arguments.clone());
         let call: tinymcp_bus::ClassifiedStaticToolCall = client
             .call_confidential(
@@ -167,7 +150,7 @@ impl Tool for ModuleConfiguredMcpServerTool {
             )
             .await
             .map_err(|_| anyhow::anyhow!("MCP tool call failed"))?;
-        let mut result = super::mcp::classified_result(
+        let mut result = super::tools::classified_result(
             call,
             &self.presentation.server_id,
             &self.presentation.remote_name,
@@ -179,5 +162,5 @@ impl Tool for ModuleConfiguredMcpServerTool {
 }
 
 #[cfg(test)]
-#[path = "mcp_server_tools_tests.rs"]
+#[path = "server_tools_tests.rs"]
 mod tests;
