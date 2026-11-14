@@ -16,7 +16,6 @@ pub mod egress;
 pub mod encryption;
 pub mod keyring_consent;
 pub mod live_policy;
-pub mod pairing;
 pub mod policy;
 pub mod prompt_injection;
 pub mod scrub;
@@ -34,8 +33,6 @@ pub use egress::{
 };
 pub use ops as rpc;
 pub use ops::*;
-#[allow(unused_imports)]
-pub use pairing::is_public_bind;
 pub use policy::validate_path_within_root;
 #[allow(unused_imports)]
 pub use policy::AutonomyLevel;
